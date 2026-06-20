@@ -325,21 +325,23 @@ else:
     prev_start = today.replace(year=py, month=pm, day=1)
     ps, pe = prev_start, prev_start + datetime.timedelta(days=(ce - cs).days)
 
-# ── Global Sidebar Segment Filters ────────────────────────────────────────────
+# ── Global Sidebar Segment Filters (Upgraded to State-Retaining Multi-Select) ──
 st.sidebar.markdown("### 🔍 Segment Filters")
-client_opts = ["All Clients"] + sorted(list(df_base["company_name"].dropna().unique()))
-sel_client = st.sidebar.selectbox("Client Scope", client_opts)
 
-city_opts = ["All Cities"] + sorted(list(df_base["jobCity"].dropna().unique()))
-sel_city = st.sidebar.selectbox("City Scope", city_opts)
+client_opts = sorted(list(df_base["company_name"].dropna().unique()))
+selected_clients = st.sidebar.multiselect("Client Scope", client_opts, key="global_filter_client")
 
-vl_opts = ["All VL Partners"] + sorted(list(df_base["vl_name"].dropna().unique()))
-sel_vl = st.sidebar.selectbox("Vendor Line Scope", vl_opts)
+city_opts = sorted(list(df_base["jobCity"].dropna().unique()))
+selected_cities = st.sidebar.multiselect("City Scope", city_opts, key="global_filter_city")
 
+vl_opts = sorted(list(df_base["vl_name"].dropna().unique()))
+selected_vls = st.sidebar.multiselect("Vendor Line Scope", vl_opts, key="global_filter_vl")
+
+# Cascade filter layers down sequentially onto operational processing dataframe using isin()
 df = df_base.copy()
-if sel_client != "All Clients": df = df[df["company_name"] == sel_client]
-if sel_city != "All Cities":   df = df[df["jobCity"] == sel_city]
-if sel_vl != "All VL Partners":     df = df[df["vl_name"] == sel_vl]
+if selected_clients: df = df[df["company_name"].isin(selected_clients)]
+if selected_cities:  df = df[df["jobCity"].isin(selected_cities)]
+if selected_vls:     df = df[df["vl_name"].isin(selected_vls)]
 
 # ── Header Markup Execution ───────────────────────────────────────────────────
 st.markdown(f"""
@@ -539,7 +541,7 @@ with tab1:
     else:
         st.info("No segments meet expansion target profile bounds currently.")
 
-    # Relocated Dynamic Vendor Lines Table Placement Row
+    # Dynamic Vendor Lines Table Placement Row
     section("Dynamic Vendor Line (VL) Analytics Tracker")
     vl_left, vl_right = st.columns(2)
     
