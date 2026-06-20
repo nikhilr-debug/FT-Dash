@@ -16,7 +16,7 @@ st.set_page_config(
 # ── Design tokens & Premium Theme System ──────────────────────────────────────
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
 :root {
   --bg:        #0f1117;
@@ -164,24 +164,11 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   border-collapse: collapse;
   font-size: 12px;
 }
-.dash-table th {
-  text-align: left;
-  font-size: 10px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  padding: 8px 12px;
-  border-bottom: 0.5px solid var(--br2);
-  background: var(--surface2);
-  font-weight: 700;
-  white-space: nowrap;
-}
 .dash-table td {
   padding: 8px 12px;
   border-bottom: 0.5px solid var(--br);
   color: var(--text);
   white-space: nowrap;
-  vertical-align: middle;
 }
 .dash-table tr:last-child td { border-bottom: none; }
 .dash-table tr:hover td { background: var(--surface2); }
@@ -405,7 +392,7 @@ def draw_sortable_header(table_id, col_specs):
     
     for idx, (label, field, weight) in enumerate(col_specs):
         icon = " ▴" if current_col == field and not current_desc else (" ▾" if current_col == field else "")
-        if grid_cols[idx].button(f"{label}{icon}", key=f"btn_{table_id}_{field}", use_container_width=True):
+        if grid_cols[idx].button(f"{label}{icon}", key=f"btn_{table_id}_{str(field)}", use_container_width=True):
             if current_col == field:
                 st.session_state[state_key] = (field, not current_desc)
             else:
@@ -441,17 +428,15 @@ with tab1:
     with k3: st.markdown(kpi_html("Δ Volume Shift", fmt(dlt_tot), pill_html=volume_pill(dlt_tot)), unsafe_allow_html=True)
     with k4: st.markdown(kpi_html("Δ % Shift", f"{pct_tot:+.1f}%" if pd.notna(pct_tot) else "—", pill_html=pill_markup(pct_tot)), unsafe_allow_html=True)
 
-    # ── Trailing 8-Week Placement Trend Engine Setup ──
+    # Trailing 8-Week Placement Running Trend Engine Setup
     df_trend = df.copy()
     df_trend['datetime'] = pd.to_datetime(df_trend[ft])
     df_trend['Week_Start'] = df_trend['datetime'].dt.to_period('W').dt.start_time.dt.date
     
-    # Process lookback anchor rules depending on incomplete week exclusion state
     dow = today.weekday()
     this_week_monday = today - datetime.timedelta(days=dow)
     
     if exclude_current:
-        # Purge current week records and shift anchor back
         df_trend = df_trend[df_trend['Week_Start'] < this_week_monday]
         
     if not df_trend.empty:
@@ -477,26 +462,25 @@ with tab1:
         
         # ── CLIENT X WEEK CROSS-TAB MATRIX TABLE COMPONENT ──
         section("Client × Week Matrix View (FT Volume & WoW Changes)")
-        
-        # Pivot tracking dataset into matrix structure
         matrix_src = df_trend.groupby(['company_name', 'Week_Start']).size().unstack(fill_value=0)
         
-        # Map chronological labels safely across existing dimensions
-        header_labels = [f"W/C {w.strftime('%d %b')}" for w in active_weeks]
+        # Build custom header row array specifications using weeks
+        col_specs_week = [("Client Profile", "Client", 3)] + [(f"W/C {w.strftime('%d %b')}", w, 1) for w in active_weeks]
+        w_col, w_desc = draw_sortable_header("client_week_matrix", col_specs_week)
         
-        # Build custom HTML table container
-        m_tbl = '<div class="tw" style="overflow-x:auto;"><table class="dash-table"><thead><tr>'
-        m_tbl += '<th>Client Profile</th>'
-        for lbl in header_labels:
-            m_tbl += f'<th class="n" style="min-width:105px;">{lbl}</th>'
-        m_tbl += '</tr></thead><tbody>'
+        # Apply sorting logic states safely to pivoted structures
+        if w_col == "Client":
+            matrix_src = matrix_src.sort_index(ascending=not w_desc)
+        else:
+            matrix_src = matrix_src.sort_values(by=w_col, ascending=not w_desc)
+            
+        m_tbl = '<div class="tw" style="overflow-x:auto;"><table class="dash-table"><tbody>'
         
         for client_name, row in matrix_src.iterrows():
-            m_tbl += f'<tr><td style="font-weight:600;">{client_name}</td>'
+            m_tbl += f'<tr><td style="width: 27.2%; font-weight:600;">{client_name}</td>'
             for idx, week_monday in enumerate(active_weeks):
                 val = row.get(week_monday, 0)
                 
-                # Compute relative WoW shifts inside trailing vectors
                 if idx == 0:
                     wow_str = '<span style="font-size:10px; color:var(--muted);">Base</span>'
                 else:
@@ -509,7 +493,7 @@ with tab1:
                     else:
                         wow_str = f'<span style="font-size:10px; color:var(--green); font-weight:700;">+100%</span>' if val > 0 else '<span style="font-size:10px; color:var(--muted);">0%</span>'
                 
-                m_tbl += f'<td class="n"><div style="font-weight:600;">{val:,}</div><div>{wow_str}</div></td>'
+                m_tbl += f'<td class="n" style="width: 9.1%;"><div style="font-weight:600;">{val:,}</div><div>{wow_str}</div></td>'
             m_tbl += '</tr>'
             
         m_tbl += '</tbody></table></div>'
@@ -555,7 +539,7 @@ with tab1:
     else:
         st.info("No segments meet expansion target profile bounds currently.")
 
-    # ── Relocated Dynamic Vendor Lines Table Placement Row ──
+    # Relocated Dynamic Vendor Lines Table Placement Row
     section("Dynamic Vendor Line (VL) Analytics Tracker")
     vl_left, vl_right = st.columns(2)
     
@@ -657,7 +641,7 @@ with tab2:
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
     else:
-        st.info("No tracking accounts logged performance shortfall vectors during this window range.")
+        st.info("No matching accounts logged performance shortfall vectors during this window range.")
 
     # Growing Regions — by MTD Δ%
     section("Growing Regions Profile — Ranked by % Surge")
