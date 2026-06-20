@@ -11,40 +11,40 @@ st.set_page_config(
     page_title="Vahan Performance Dashboard",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded", # Opened sidebar to house global filters cleanly
 )
 
 # ── Design tokens (from reference HTML) ───────────────────────────────────────
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600;700;800&display=swap');
 
 :root {
-  --bg:       #0f1117;
-  --surface:  #1a1d27;
-  --surface2: #21263a;
-  --surface3: #2a2f45;
-  --br:       rgba(255,255,255,0.07);
-  --br2:      rgba(255,255,255,0.13);
-  --text:     #eaeaea;
-  --muted:    #8b8fa8;
-  --faint:    #4a4f6a;
-  --r:        8px;
-  --rl:       12px;
+  --bg:        #0f1117;
+  --surface:   #1a1d27;
+  --surface2:  #21263a;
+  --surface3:  #2a2f45;
+  --br:        rgba(255,255,255,0.07);
+  --br2:       rgba(255,255,255,0.13);
+  --text:      #eaeaea;
+  --muted:     #8b8fa8;
+  --faint:     #4a4f6a;
+  --r:         8px;
+  --rl:        12px;
 
-  --red:      #ff6b6b;
-  --red-bg:   #2d1515;
-  --red-b:    #e05252;
-  --amber:    #ffc97a;
-  --amber-bg: #2d1e07;
-  --amber-b:  #d4891a;
-  --green:    #6dd67b;
-  --green-bg: #102216;
-  --green-b:  #4a9e2f;
-  --blue:     #7cb9f8;
-  --blue-bg:  #0d1e38;
-  --blue-b:   #2f7dd4;
-  --purple:   #b08cff;
+  --red:       #ff6b6b;
+  --red-bg:    #2d1515;
+  --red-b:     #e05252;
+  --amber:     #ffc97a;
+  --amber-bg:  #2d1e07;
+  --amber-b:   #d4891a;
+  --green:     #6dd67b;
+  --green-bg:  #102216;
+  --green-b:   #4a9e2f;
+  --blue:      #7cb9f8;
+  --blue-bg:   #0d1e38;
+  --blue-b:    #2f7dd4;
+  --purple:    #b08cff;
   --purple-bg:#1e1435;
 }
 
@@ -466,7 +466,8 @@ def section(title):
         f'<div class="sec-ttl">{title}<div class="sec-ttl-line"></div></div>',
         unsafe_allow_html=True)
 
-def bar_chart(df_in, x_col, y_cols, labels, colors, title="", height=280):
+# ── Dynamic key parameter added to charts to resolve Streamlit duplicate ID exceptions ──
+def bar_chart(df_in, x_col, y_cols, labels, colors, title="", height=280, key=None):
     """Side-by-side grouped bar chart via Plotly."""
     fig = go.Figure()
     for y, lbl, col in zip(y_cols, labels, colors):
@@ -478,9 +479,9 @@ def bar_chart(df_in, x_col, y_cols, labels, colors, title="", height=280):
     layout["height"] = height
     layout["title"]  = dict(text=title, font=dict(size=12, color="#eaeaea"), x=0)
     fig.update_layout(**layout)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
 
-def delta_bar_chart(df_in, x_col, delta_col, title="", height=260):
+def delta_bar_chart(df_in, x_col, delta_col, title="", height=260, key=None):
     """Single bar chart coloured by positive/negative delta."""
     vals  = df_in[delta_col].values
     cols  = [BAR_POS if v >= 0 else BAR_NEG for v in vals]
@@ -497,9 +498,9 @@ def delta_bar_chart(df_in, x_col, delta_col, title="", height=260):
     layout["showlegend"] = False
     layout["yaxis"]["showgrid"] = True
     fig.update_layout(**layout)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
 
-def funnel_bar(stages_data, title="Funnel Volume Comparison", height=300):
+def funnel_bar(stages_data, title="Funnel Volume Comparison", height=300, key=None):
     """Grouped bar for funnel stages."""
     labels = [s["label"] for s in stages_data]
     cur_v  = [s["cur"]   for s in stages_data]
@@ -513,10 +514,10 @@ def funnel_bar(stages_data, title="Funnel Volume Comparison", height=300):
     layout["height"] = height
     layout["title"]  = dict(text=title, font=dict(size=12, color="#eaeaea"), x=0)
     fig.update_layout(**layout)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# LOAD DATA
+# LOAD & INITIALIZE DATA
 # ══════════════════════════════════════════════════════════════════════════════
 with st.spinner("Fetching live data…"):
     raw = fetch_data()
@@ -525,8 +526,34 @@ if raw.empty:
     st.warning("No data returned. Check API connectivity.")
     st.stop()
 
-df = parse_dates(raw.copy())
+df_base = parse_dates(raw.copy())
 ft = "first_date_of_work"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SIDEBAR GLOBAL FILTERS
+# ══════════════════════════════════════════════════════════════════════════════
+st.sidebar.markdown("### 🎛️ Global Segment Filters")
+
+# Client Filter
+client_options = ["All Clients"] + sorted(list(df_base["company_name"].dropna().unique()))
+selected_client = st.sidebar.selectbox("Client Selection", client_options)
+
+# City Filter
+city_options = ["All Cities"] + sorted(list(df_base["jobCity"].dropna().unique()))
+selected_city = st.sidebar.selectbox("City Selection", city_options)
+
+# VL Filter
+vl_options = ["All VL Partners"] + sorted(list(df_base["vl_name"].dropna().unique()))
+selected_vl = st.sidebar.selectbox("VL Partner Selection", vl_options)
+
+# Cascade filter layers down sequentially onto operational processing dataframe
+df = df_base.copy()
+if selected_client != "All Clients":
+    df = df[df["company_name"] == selected_client]
+if selected_city != "All Cities":
+    df = df[df["jobCity"] == selected_city]
+if selected_vl != "All VL Partners":
+    df = df[df["vl_name"] == selected_vl]
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 today     = datetime.date.today()
@@ -540,7 +567,7 @@ with h_left:
         <div class="dash-title">Vahan <span>Performance</span> Dashboard</div>
         <div class="dash-meta">
           <span class="live-dot"></span>Live · as of {yesterday.strftime('%d %b %Y')} ·
-          {len(df):,} records loaded
+          {len(df):,} segments matching filters out of {len(df_base):,} records
         </div>
       </div>
     </div>""", unsafe_allow_html=True)
@@ -582,6 +609,40 @@ with tab1:
                                    "period-over-period", pill(pct_tot, is_pct=True)), unsafe_allow_html=True)
     st.markdown("<div style='margin-top:.5rem'></div>", unsafe_allow_html=True)
 
+    # 📊 8-Week Week-over-Week Placement Volume Chart Component
+    section("Week-over-week placements — 8 weeks trend")
+    
+    # Generate continuous ISO week indexing targets going back 8 complete spans
+    df_ft_dates = pd.DataFrame({ft: df[ft].dropna()})
+    df_ft_dates['datetime'] = pd.to_datetime(df_ft_dates[ft])
+    
+    # Calculate starting Monday of placement week
+    df_ft_dates['Week_Start'] = df_ft_dates['datetime'].dt.to_period('W').dt.start_time.dt.date
+    
+    # Calculate trailing bounds
+    eight_weeks_ago = yesterday - datetime.timedelta(weeks=8)
+    ms_trend = df_ft_dates[(df_ft_dates['Week_Start'] >= eight_weeks_ago) & (df_ft_dates['Week_Start'] <= yesterday)]
+    
+    if not ms_trend.empty:
+        trend_agg = ms_trend.groupby('Week_Start').size().reset_index(name='Placements')
+        trend_agg = trend_agg.sort_values('Week_Start')
+        trend_agg['Label'] = trend_agg['Week_Start'].apply(lambda x: f"W/C {x.strftime('%d %b')}")
+        
+        fig_wow = go.Figure(go.Bar(
+            x=trend_agg['Label'], y=trend_agg['Placements'],
+            marker_color=BAR_CUR, marker_line_width=0,
+            text=[f"{int(v):,}" for v in trend_agg['Placements']],
+            textposition="outside",
+            textfont=dict(size=10, color="#8b8fa8"),
+        ))
+        layout_wow = dict(**PLOT_LAYOUT)
+        layout_wow["height"] = 260
+        layout_wow["showlegend"] = False
+        fig_wow.update_layout(**layout_wow)
+        st.plotly_chart(fig_wow, use_container_width=True, config={"displayModeBar": False}, key="wow_8_weeks_trend")
+    else:
+        st.info("Insufficient data points across the matching segment criteria to build an 8-week lookback profile.")
+
     # Client comparison data
     cl_df = compare(df, ft, cs, ce, ps, pe, "company_name").reset_index()
     cl_df.columns = ["Client", "cur", "prv", "delta", "pct"]
@@ -590,19 +651,37 @@ with tab1:
     section("Client Volume — Current vs Previous")
     chart_df = cl_df.sort_values("cur", ascending=False).head(15)
     bar_chart(chart_df, "Client", ["prv", "cur"], ["Previous", "Current"],
-              [BAR_PRV, BAR_CUR], height=300)
+              [BAR_PRV, BAR_CUR], height=300, key="main_client_vol")
 
     # Delta bar chart
     section("Client Volume Change (Δ)")
-    delta_bar_chart(cl_df.sort_values("delta"), "Client", "delta", height=260)
+    delta_bar_chart(cl_df.sort_values("delta"), "Client", "delta", height=260, key="main_client_delta")
 
-    # Summary table
+    # Summary table with integrated Pandas Sort Selector
     section("Client Performance Table")
+    
+    sc1, sc2 = st.columns([1, 4])
+    with sc1:
+        sort_opt_client = st.selectbox(
+            "Sort Order Column", 
+            ["Drop Size (Worst First)", "Growth Size (Best First)", "Volume (Current)", "Client Alphabetical"],
+            key="sort_ctrl_client"
+        )
+        
+    if sort_opt_client == "Drop Size (Worst First)":
+        cl_df_sorted = cl_df.sort_values("delta", ascending=True)
+    elif sort_opt_client == "Growth Size (Best First)":
+        cl_df_sorted = cl_df.sort_values("delta", ascending=False)
+    elif sort_opt_client == "Volume (Current)":
+        cl_df_sorted = cl_df.sort_values("cur", ascending=False)
+    else:
+        cl_df_sorted = cl_df.sort_values("Client", ascending=True)
+
     max_cur = cl_df["cur"].max() or 1
     tbl = '<div class="tw"><table class="dash-table"><thead><tr>'
     tbl += '<th>Client</th><th class="n">Current</th><th class="n">Previous</th>'
     tbl += '<th class="n">Δ Volume</th><th class="n">Δ %</th><th>Share</th></tr></thead><tbody>'
-    for _, r in cl_df.sort_values("delta").iterrows():
+    for _, r in cl_df_sorted.iterrows():
         bar_w = int(min(100, r["cur"] / max_cur * 100)) if max_cur > 0 else 0
         tbl += f"""<tr>
           <td class="td-bold">{r['Client']}</td>
@@ -612,94 +691,100 @@ with tab1:
           <td class="n">{pill(r['pct'], is_pct=True)}</td>
           <td>
             <div class="bwrap"><div class="bfill" style="width:{bar_w}%"></div></div>
-            <span style="font-size:10px;color:var(--muted)">{r['cur']/cur_tot*100:.0f}%</span>
+            <span style="font-size:10px;color:var(--muted)">{r['cur']/max(cur_tot,1)*100:.0f}%</span>
           </td>
         </tr>"""
     tbl += "</tbody></table></div>"
     st.markdown(tbl, unsafe_allow_html=True)
 
-    # Drill-down
-    section("Drill-Down: Client → Region → VL Partner")
+    # Drill-down Component Layout Modifiers
+    section("Drill-Down Matrix Profile Analysis")
     all_clients = sorted(df["company_name"].dropna().unique()) if "company_name" in df.columns else []
-    sel = st.selectbox("Select client", all_clients, label_visibility="collapsed")
-    if sel:
-        sub = df[df["company_name"] == sel]
-        dc1, dc2 = st.columns(2)
+    if all_clients:
+        sel = st.selectbox("Isolate profile for matrix deep-dive", all_clients, key="drill_client_select")
+        if sel:
+            sub = df[df["company_name"] == sel]
+            dc1, dc2 = st.columns(2)
 
-        with dc1:
-            section("By Region")
-            rg = compare(sub, ft, cs, ce, ps, pe, "region").reset_index()
-            if not rg.empty:
-                rg.columns = ["Region", "cur", "prv", "delta", "pct"]
-                bar_chart(rg, "Region", ["prv", "cur"], ["Previous", "Current"],
-                          [BAR_PRV, BAR_CUR], height=220)
-        with dc2:
-            section("By VL Partner")
-            if "vl_name" in sub.columns:
-                vl = compare(sub, ft, cs, ce, ps, pe, "vl_name").reset_index()
-                if not vl.empty:
-                    vl.columns = ["VL", "cur", "prv", "delta", "pct"]
-                    bar_chart(vl.sort_values("cur", ascending=False).head(12),
-                              "VL", ["prv", "cur"], ["Previous", "Current"],
-                              [BAR_PRV, BAR_CUR], height=220)
+            with dc1:
+                section("Associated Regional Footprint")
+                rg = compare(sub, ft, cs, ce, ps, pe, "region").reset_index()
+                if not rg.empty:
+                    rg.columns = ["Region", "cur", "prv", "delta", "pct"]
+                    bar_chart(rg, "Region", ["prv", "cur"], ["Previous", "Current"],
+                              [BAR_PRV, BAR_CUR], height=220, key=f"drill_reg_{sel}")
+                else:
+                    st.info("No matching historical transitions found for this category segment.")
+            with dc2:
+                section("Vendor Partners Breakdown (VL)")
+                if "vl_name" in sub.columns:
+                    vl = compare(sub, ft, cs, ce, ps, pe, "vl_name").reset_index()
+                    if not vl.empty:
+                        vl.columns = ["VL", "cur", "prv", "delta", "pct"]
+                        bar_chart(vl.sort_values("cur", ascending=False).head(12),
+                                  "VL", ["prv", "cur"], ["Previous", "Current"],
+                                  [BAR_PRV, BAR_CUR], height=220, key=f"drill_vl_{sel}")
+                    else:
+                        st.info("No mapped vendor transactions match active filters.")
 
 # ════════════════════════════════════════════════════════════
-# TAB 2 — REGION & AM
+# TAB 2 — REGION & AM (With Sorting Overrides)
 # ════════════════════════════════════════════════════════════
 with tab2:
-    k1, k2, k3, k4 = st.columns(4)
-    with k1: st.markdown(kpi_html("Current FT", fmt(cur_tot)), unsafe_allow_html=True)
-    with k2: st.markdown(kpi_html("Previous FT", fmt(prv_tot)), unsafe_allow_html=True)
-    with k3: st.markdown(kpi_html("Δ Volume", fmt(dlt_tot), "", pill(dlt_tot)), unsafe_allow_html=True)
-    with k4: st.markdown(kpi_html("Δ %", f"{pct_tot:+.1f}%" if np.isfinite(pct_tot) else "—",
-                                   "", pill(pct_tot, is_pct=True)), unsafe_allow_html=True)
-    st.markdown("<div style='margin-top:.5rem'></div>", unsafe_allow_html=True)
-
+    # Unified Group renderer that dynamically processes individual selectbox sorts 
     def render_group(col_name, display_name, parent_col=None):
         ctx = parent_col if parent_col else st
         if col_name not in df.columns:
-            ctx.info(f"`{col_name}` not in dataset.")
+            ctx.info(f"`{col_name}` metadata row parameter missing from index.")
             return
         grp = compare(df, ft, cs, ce, ps, pe, col_name).reset_index()
         if grp.empty:
-            ctx.info("No data.")
+            ctx.info("No metrics matching active filter bounds.")
             return
         grp.columns = [display_name, "cur", "prv", "delta", "pct"]
 
-        # Chart
-        section(f"{display_name} — Volume Comparison")
-        bar_chart(grp.sort_values("cur", ascending=False).head(12),
-                  display_name, ["prv", "cur"], ["Previous", "Current"],
-                  [BAR_PRV, BAR_CUR], height=240)
+        with ctx:
+            section(f"{display_name} — Volume Comparison")
+            bar_chart(grp.sort_values("cur", ascending=False).head(12),
+                      display_name, ["prv", "cur"], ["Previous", "Current"],
+                      [BAR_PRV, BAR_CUR], height=240, key=f"bar_grp_{col_name}")
 
-        # Delta chart
-        section(f"{display_name} — Change (Δ)")
-        delta_bar_chart(grp.sort_values("delta"), display_name, "delta", height=220)
+            section(f"{display_name} — Change (Δ)")
+            delta_bar_chart(grp.sort_values("delta"), display_name, "delta", height=220, key=f"delta_grp_{col_name}")
 
-        # Table
-        section(f"{display_name} Table")
-        tbl = '<div class="tw"><table class="dash-table"><thead><tr>'
-        tbl += f'<th>{display_name}</th><th class="n">Current</th><th class="n">Previous</th>'
-        tbl += '<th class="n">Δ</th><th class="n">Δ %</th></tr></thead><tbody>'
-        for _, r in grp.sort_values("delta").iterrows():
-            tbl += f"""<tr>
-              <td class="td-bold">{r[display_name]}</td>
-              <td class="n">{fmt(r['cur'])}</td>
-              <td class="n td-muted">{fmt(r['prv'])}</td>
-              <td class="n">{pill(r['delta'])}</td>
-              <td class="n">{pill(r['pct'], is_pct=True)}</td>
-            </tr>"""
-        tbl += "</tbody></table></div>"
-        if parent_col:
-            parent_col.markdown(tbl, unsafe_allow_html=True)
-        else:
+            # Intercept array frame to mount localized drop sorting options
+            section(f"{display_name} Matrix Breakdown")
+            sort_opt = st.selectbox(
+                "Sort Table By", 
+                ["Drop Impact", "Volume (Current)", "Label Alphabetical"], 
+                key=f"sort_ctrl_{col_name}"
+            )
+            
+            if sort_opt == "Drop Impact":
+                grp_sorted = grp.sort_values("delta", ascending=True)
+            elif sort_opt == "Volume (Current)":
+                grp_sorted = grp.sort_values("cur", ascending=False)
+            else:
+                grp_sorted = grp.sort_values(display_name, ascending=True)
+
+            tbl = '<div class="tw"><table class="dash-table"><thead><tr>'
+            tbl += f'<th>{display_name}</th><th class="n">Current</th><th class="n">Previous</th>'
+            tbl += '<th class="n">Δ</th><th class="n">Δ %</th></tr></thead><tbody>'
+            for _, r in grp_sorted.iterrows():
+                tbl += f"""<tr>
+                  <td class="td-bold">{r[display_name]}</td>
+                  <td class="n">{fmt(r['cur'])}</td>
+                  <td class="n td-muted">{fmt(r['prv'])}</td>
+                  <td class="n">{pill(r['delta'])}</td>
+                  <td class="n">{pill(r['pct'], is_pct=True)}</td>
+                </tr>"""
+            tbl += "</tbody></table></div>"
             st.markdown(tbl, unsafe_allow_html=True)
 
     col_r, col_a = st.columns(2)
     with col_r: render_group("region",  "Region",          col_r)
     with col_a: render_group("am_name", "Account Manager", col_a)
 
-    section("Source Channel & Product Category")
     col_s, col_p = st.columns(2)
     with col_s: render_group("lead_source",        "Source Channel",    col_s)
     with col_p: render_group("lead_referral_type", "Product Category",  col_p)
@@ -717,14 +802,12 @@ with tab3:
     cur_c = {lbl: count_in(df, col, cs, ce) for col, lbl in stages}
     prv_c = {lbl: count_in(df, col, ps, pe) for col, lbl in stages}
 
-    # Stage cards
     section("Funnel Volume — Current Period")
     cols_f = st.columns(4)
     stage_colors = ["#2f7dd4", "#b08cff", "#d4891a", "#4a9e2f"]
     for i, (_, lbl) in enumerate(stages):
         cv, pv = cur_c[lbl], prv_c[lbl]
         d = cv - pv
-        p = (d / pv * 100) if pv > 0 else np.nan
         d_html = pill(d)
         with cols_f[i]:
             st.markdown(f"""
@@ -735,34 +818,34 @@ with tab3:
               <div class="fn-delta">{d_html}</div>
             </div>""", unsafe_allow_html=True)
 
-    # Grouped funnel bar chart
     section("Funnel Volume Comparison")
     stage_data = [{"label": lbl, "cur": cur_c[lbl], "prv": prv_c[lbl]} for _, lbl in stages]
-    funnel_bar(stage_data, height=300)
+    funnel_bar(stage_data, height=300, key="funnel_stage_vol")
 
-    # Conversion rates table
     conv_stages = [
         ("Leads → Unique",     "Leads",        "Unique Leads"),
         ("Unique → Onboarded", "Unique Leads", "Onboarded"),
         ("Onboarded → FT",     "Onboarded",    "Placements (FT)"),
     ]
+    
+    # Conversion rates table
     section("Conversion Rates & Stage Drops")
     conv_tbl = '<div class="tw"><table class="dash-table"><thead><tr>'
-    conv_tbl += '<th>Stage</th><th class="n">Current Rate</th><th class="n">Previous Rate</th>'
+    conv_tbl += '<th>Stage Drop Track</th><th class="n">Current Rate</th><th class="n">Previous Rate</th>'
     conv_tbl += '<th class="n">Δ (pp)</th><th>Bar</th></tr></thead><tbody>'
 
     conv_chart_data = []
     for name, num_lbl, den_lbl in conv_stages:
         cr = conv(cur_c[num_lbl], cur_c[den_lbl])
         pr = conv(prv_c[num_lbl], prv_c[den_lbl])
-        pp = cr - pr
+        pp_val = cr - pr
         bar_w = int(min(100, cr))
-        bar_col = "#4a9e2f" if pp >= 0 else "#e05252"
+        bar_col = "#4a9e2f" if pp_val >= 0 else "#e05252"
         conv_tbl += f"""<tr>
           <td class="td-bold">{name}</td>
           <td class="n">{cr:.1f}%</td>
           <td class="n td-muted">{pr:.1f}%</td>
-          <td class="n">{pill(pp, is_pp=True)}</td>
+          <td class="n">{pill(pp_val, is_pp=True)}</td>
           <td>
             <div class="bwrap" style="width:80px">
               <div class="bfill" style="width:{bar_w}%;background:{bar_col}"></div>
@@ -770,19 +853,17 @@ with tab3:
             <span style="font-size:10px;color:var(--muted)">{cr:.0f}%</span>
           </td>
         </tr>"""
-        conv_chart_data.append({"Stage": name, "Current": cr, "Previous": pr, "Δpp": pp})
+        conv_chart_data.append({"Stage": name, "Previous": pr, "Current": cr, "Δpp": pp_val})
 
     conv_tbl += "</tbody></table></div>"
     st.markdown(conv_tbl, unsafe_allow_html=True)
 
-    # Conversion rate bar chart
     section("Conversion Rate Chart")
     if conv_chart_data:
         cdf = pd.DataFrame(conv_chart_data)
         bar_chart(cdf, "Stage", ["Previous", "Current"], ["Previous Rate", "Current Rate"],
-                  [BAR_PRV, BAR_CUR], height=240)
+                  [BAR_PRV, BAR_CUR], height=240, key="funnel_conversion_rates")
 
-    # Milestone volumes
     ms_cols = [c for c in [
         "5th_order_date","10th_order_date","20th_order_date","30th_order_date",
         "50th_order_date","60th_order_date","80th_order_date","100th_order_date",
@@ -799,14 +880,23 @@ with tab3:
             ms_rows.append({"Milestone": lbl, "cur": cv, "prv": pv, "delta": cv - pv})
         ms_df = pd.DataFrame(ms_rows)
         bar_chart(ms_df, "Milestone", ["prv", "cur"], ["Previous", "Current"],
-                  [BAR_PRV, BAR_CUR], height=260)
+                  [BAR_PRV, BAR_CUR], height=260, key="funnel_milestone_metrics")
+
+        # Sorted table for progressive milestones
+        st.markdown("<div style='margin-top:0.5rem'></div>", unsafe_allow_html=True)
+        sort_opt_ms = st.selectbox("Sort Milestones By", ["Chronological Index", "Volume Drop Size"], key="sort_ctrl_ms")
+        
+        if sort_opt_ms == "Volume Drop Size":
+            ms_rows_sorted = sorted(ms_rows, key=lambda x: x["delta"])
+        else:
+            ms_rows_sorted = ms_rows
 
         ms_tbl = '<div class="tw"><table class="dash-table"><thead><tr>'
-        ms_tbl += '<th>Milestone</th><th class="n">Current</th><th class="n">Previous</th><th class="n">Δ</th>'
+        ms_tbl += '<th>Milestone Stage</th><th class="n">Current</th><th class="n">Previous</th><th class="n">Δ</th>'
         ms_tbl += '</tr></thead><tbody>'
-        for r in ms_rows:
+        for r in ms_rows_sorted:
             ms_tbl += f"""<tr>
-              <td>{r['Milestone']}</td>
+              <td class="td-bold">{r['Milestone']}</td>
               <td class="n">{fmt(r['cur'])}</td>
               <td class="n td-muted">{fmt(r['prv'])}</td>
               <td class="n">{pill(r['delta'])}</td>
@@ -818,12 +908,10 @@ with tab3:
 # TAB 4 — AI SUMMARY & RCA
 # ════════════════════════════════════════════════════════════
 with tab4:
-    # Rebuild comparison frames
     cl_rca  = compare(df, ft, cs, ce, ps, pe, "company_name").reset_index()
     rg_rca  = compare(df, ft, cs, ce, ps, pe, "region").reset_index() if "region" in df.columns else pd.DataFrame()
     am_rca  = compare(df, ft, cs, ce, ps, pe, "am_name").reset_index() if "am_name" in df.columns else pd.DataFrame()
 
-    # Build mover pool
     movers = []
     for _, r in cl_rca.iterrows():
         movers.append({"dim": "Client", "name": r.iloc[0], "delta": r["delta"], "pct": r["pct"]})
@@ -838,18 +926,16 @@ with tab4:
     top3  = mv_df.nlargest(3, "delta")
     bot3  = mv_df.nsmallest(3, "delta")
 
-    # Bottlenecks
     bottlenecks = []
     cur_c2 = {lbl: count_in(df, col, cs, ce) for col, lbl in stages}
     prv_c2 = {lbl: count_in(df, col, ps, pe) for col, lbl in stages}
     for name, num_lbl, den_lbl in conv_stages:
         cr = conv(cur_c2[num_lbl], cur_c2[den_lbl])
         pr = conv(prv_c2[num_lbl], prv_c2[den_lbl])
-        pp = cr - pr
-        if pp < -2.0:
-            bottlenecks.append((name, pp, cr, pr))
+        pp_val = cr - pr
+        if pp_val < -2.0:
+            bottlenecks.append((name, pp_val, cr, pr))
 
-    # Worst structural stage
     stage_d = {
         "Lead Generation":   cur_c2.get("Leads",0) - prv_c2.get("Leads",0),
         "Uniqueness Filter": cur_c2.get("Unique Leads",0) - prv_c2.get("Unique Leads",0),
@@ -859,30 +945,25 @@ with tab4:
     worst = min(stage_d, key=lambda k: stage_d[k])
     trend = "declined" if dlt_tot < 0 else "improved"
 
-    # ── Executive Overview ──
     section("Executive Overview")
     st.markdown(f"""
     <div class="rca-card">
       <div class="rca-ttl">Overall Summary</div>
       <div class="rca-body">
-        Total placements (FT) <strong>{trend}</strong> by
+        Total filtered segment placements (FT) <strong>{trend}</strong> by
         <strong style="color:{'var(--red)' if dlt_tot < 0 else 'var(--green)'}">{fmt(abs(dlt_tot))}</strong>
         ({f"{pct_tot:+.1f}%" if np.isfinite(pct_tot) else "N/A"}) period-over-period ({mode}),
         from <strong>{fmt(prv_tot)}</strong> → <strong>{fmt(cur_tot)}</strong>.
-        The <strong style="color:var(--amber)">{worst}</strong> layer drove the largest share of this variance.
-        Immediate review of the dimensions below is recommended to arrest further decline or
-        reinforce positive momentum.
+        The structural bottleneck is primarily located inside the <strong style="color:var(--amber)">{worst}</strong> processing layer.
       </div>
     </div>""", unsafe_allow_html=True)
 
-    # Top & Bottom movers side-by-side
     mc1, mc2 = st.columns(2)
-
     with mc1:
-        section("Top 3 Positive Movers")
+        section("Top 3 Segment Gainers")
         items = ""
         if top3.empty:
-            items = '<div style="color:var(--muted);font-size:12px;padding:8px 0">No positive movers this period.</div>'
+            items = '<div style="color:var(--muted);font-size:12px;padding:8px 0">No segments posted performance expansions.</div>'
         else:
             for _, r in top3.iterrows():
                 p_str = f"{r['pct']:+.1f}%" if pd.notna(r["pct"]) and np.isfinite(r["pct"]) else ""
@@ -892,14 +973,13 @@ with tab4:
                   gained <strong style="color:var(--green)">{fmt(r['delta'])}</strong>
                   placements <span style="color:var(--muted)">{p_str}</span></div>
                 </div>"""
-        st.markdown(f'<div class="rca-card"><div class="rca-ttl">Gainers</div>{items}</div>',
-                    unsafe_allow_html=True)
+        st.markdown(f'<div class="rca-card"><div class="rca-ttl">Gainers</div>{items}</div>', unsafe_allow_html=True)
 
     with mc2:
-        section("Top 3 Bottom Movers")
+        section("Top 3 Segment Laggards")
         items = ""
         if bot3.empty:
-            items = '<div style="color:var(--muted);font-size:12px;padding:8px 0">No negative movers this period.</div>'
+            items = '<div style="color:var(--muted);font-size:12px;padding:8px 0">No segment metric contractions tracked.</div>'
         else:
             for _, r in bot3.iterrows():
                 p_str = f"{r['pct']:+.1f}%" if pd.notna(r["pct"]) and np.isfinite(r["pct"]) else ""
@@ -909,36 +989,30 @@ with tab4:
                   dropped <strong style="color:var(--red)">{fmt(abs(r['delta']))}</strong>
                   placements <span style="color:var(--muted)">{p_str}</span></div>
                 </div>"""
-        st.markdown(f'<div class="rca-card"><div class="rca-ttl">Laggards</div>{items}</div>',
-                    unsafe_allow_html=True)
+        st.markdown(f'<div class="rca-card"><div class="rca-ttl">Laggards</div>{items}</div>', unsafe_allow_html=True)
 
-    # Mover bar chart
     section("Movers Visual — Delta by Dimension")
     if not mv_df.empty:
         mv_sorted = mv_df.sort_values("delta")
-        delta_bar_chart(mv_sorted, "name", "delta", height=300)
+        delta_bar_chart(mv_sorted, "name", "delta", height=300, key="rca_summary_movers")
 
-    # Conversion bottlenecks
     section("Conversion Bottlenecks (>2pp Drop)")
     if not bottlenecks:
         st.markdown("""<div class="rca-card">
           <div class="rca-body" style="color:var(--muted)">
-            ✅ No conversion stage dropped more than 2pp this period. Funnel is structurally healthy.
+            ✅ No internal conversion layers degraded past the threshold limit. Funnel structures are secure.
           </div></div>""", unsafe_allow_html=True)
     else:
         items = ""
         for sname, pp_val, cr, pr in bottlenecks:
             items += f"""<div class="rca-item">
               <div class="rca-dot dot-r"></div>
-              <div><strong>{sname}</strong> dropped
+              <div><strong>{sname}</strong> decayed by
               <strong style="color:var(--red)">{pp_val:.1f}pp</strong>
               (from <strong>{pr:.1f}%</strong> → <strong>{cr:.1f}%</strong>).
-              Investigate drop-off in this funnel stage immediately.</div>
-            </div>"""
-        st.markdown(f'<div class="rca-card"><div class="rca-ttl">Bottlenecks</div>{items}</div>',
-                    unsafe_allow_html=True)
+            </div></div>"""
+        st.markdown(f'<div class="rca-card"><div class="rca-ttl">Bottlenecks</div>{items}</div>', unsafe_allow_html=True)
 
-    # Full funnel snapshot
     section("Full Funnel Snapshot")
     snap_tbl = '<div class="tw"><table class="dash-table"><thead><tr>'
     snap_tbl += '<th>Stage</th><th class="n">Current</th><th class="n">Previous</th>'
@@ -960,5 +1034,5 @@ with tab4:
 
     st.markdown(f"""
     <div style="margin-top:2rem;font-size:11px;color:var(--muted);text-align:right">
-      Data cached 1 hr · Period: {cs.strftime('%d %b')} – {ce.strftime('%d %b %Y')} · {len(df):,} records
+      Data cached 1 hr · Active Filters Active · {len(df):,} matching segment index strings
     </div>""", unsafe_allow_html=True)
