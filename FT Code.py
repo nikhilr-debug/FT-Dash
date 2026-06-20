@@ -375,10 +375,19 @@ with tab1:
     if not trend_data.empty:
         trend_data = trend_data.sort_values('Week_Start')
         trend_data['Label'] = trend_data['Week_Start'].apply(lambda x: f"W/C {x.strftime('%d %b')}")
-        fig = go.Figure(go.Scatter(x=trend_agg=trend_data['Label'], y=trend_data['Placements'], mode='lines+markers+text', line=dict(color=BAR_CUR, width=3), text=trend_data['Placements'], textposition="top center", marker=dict(size=8)))
+        
+        # Fixed the syntax error on the line below
+        fig = go.Figure(go.Scatter(
+            x=trend_data['Label'], 
+            y=trend_data['Placements'], 
+            mode='lines+markers+text', 
+            line=dict(color=BAR_CUR, width=3), 
+            text=trend_data['Placements'], 
+            textposition="top center", 
+            marker=dict(size=8)
+        ))
         fig.update_layout(**PLOT_LAYOUT, height=220)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key="8_week_trend_line")
-
     # Client Performance Snapshot Table
     section("All Active Client Execution Matrix")
     client_mat = compute_comparison_matrix(df, "company_name").reset_index()
