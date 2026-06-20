@@ -16,7 +16,7 @@ st.set_page_config(
 # ── Design tokens & Premium Theme System ──────────────────────────────────────
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600;700;800&display=swap');
 
 :root {
   --bg:        #0f1117;
@@ -164,11 +164,24 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   border-collapse: collapse;
   font-size: 12px;
 }
+.dash-table th {
+  text-align: left;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: 8px 12px;
+  border-bottom: 0.5px solid var(--br2);
+  background: var(--surface2);
+  font-weight: 700;
+  white-space: nowrap;
+}
 .dash-table td {
   padding: 8px 12px;
   border-bottom: 0.5px solid var(--br);
   color: var(--text);
   white-space: nowrap;
+  vertical-align: middle;
 }
 .dash-table tr:last-child td { border-bottom: none; }
 .dash-table tr:hover td { background: var(--surface2); }
@@ -312,6 +325,9 @@ yesterday = today - datetime.timedelta(days=1)
 st.sidebar.markdown("### 🎛️ Parameters")
 mode = st.sidebar.selectbox("Comparison Window Mode", ["WTD", "MTD"])
 
+# ── Incomplete Week Exclusion Toggle ──
+exclude_current = st.sidebar.checkbox("Exclude Current Incomplete Week", value=False)
+
 if mode == "WTD":
     dow = today.weekday()
     cs, ce = today - datetime.timedelta(days=dow), yesterday
@@ -400,16 +416,6 @@ def draw_sortable_header(table_id, col_specs):
 def section(title):
     st.markdown(f'<div class="sec-ttl">{title}<div class="sec-ttl-line"></div></div>', unsafe_allow_html=True)
 
-def bar_chart(df_in, x_col, y_cols, labels, colors, title="", height=240, key=None):
-    fig = go.Figure()
-    for y, lbl, col in zip(y_cols, labels, colors):
-        fig.add_trace(go.Bar(x=df_in[x_col], y=df_in[y], name=lbl, marker_color=col, marker_line_width=0))
-    layout = dict(**PLOT_LAYOUT)
-    layout["height"] = height
-    layout["title"]  = dict(text=title, font=dict(size=12, color="#eaeaea"), x=0)
-    fig.update_layout(**layout)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
-
 # ── Primary Metric Matrices Engine Calculations ──────────────────────────────
 cur_tot = len(df[(df[ft] >= cs) & (df[ft] <= ce)])
 prv_tot = len(df[(df[ft] >= ps) & (df[ft] <= pe)])
@@ -435,19 +441,29 @@ with tab1:
     with k3: st.markdown(kpi_html("Δ Volume Shift", fmt(dlt_tot), pill_html=volume_pill(dlt_tot)), unsafe_allow_html=True)
     with k4: st.markdown(kpi_html("Δ % Shift", f"{pct_tot:+.1f}%" if pd.notna(pct_tot) else "—", pill_html=pill_markup(pct_tot)), unsafe_allow_html=True)
 
-    # Trailing 8-Week Placement Running Trend Lookback (Lines chart representation)
-    section("Trailing 8-Week Placement Trend Lookback")
-    df_trend = pd.DataFrame({ft: df[ft].dropna()})
+    # ── Trailing 8-Week Placement Trend Engine Setup ──
+    df_trend = df.copy()
     df_trend['datetime'] = pd.to_datetime(df_trend[ft])
     df_trend['Week_Start'] = df_trend['datetime'].dt.to_period('W').dt.start_time.dt.date
     
-    eight_weeks_ago = yesterday - datetime.timedelta(weeks=8)
-    trend_data = df_trend[(df_trend['Week_Start'] >= eight_weeks_ago) & (df_trend['Week_Start'] <= yesterday)].groupby('Week_Start').size().reset_index(name='Placements')
+    # Process lookback anchor rules depending on incomplete week exclusion state
+    dow = today.weekday()
+    this_week_monday = today - datetime.timedelta(days=dow)
     
-    if not trend_data.empty:
+    if exclude_current:
+        # Purge current week records and shift anchor back
+        df_trend = df_trend[df_trend['Week_Start'] < this_week_monday]
+        
+    if not df_trend.empty:
+        max_trend_w = df_trend['Week_Start'].max()
+        active_weeks = [max_trend_w - datetime.timedelta(weeks=i) for i in range(7, -1, -1)]
+        df_trend = df_trend[df_trend['Week_Start'].isin(active_weeks)]
+        
+        trend_data = df_trend.groupby('Week_Start').size().reset_index(name='Placements')
         trend_data = trend_data.sort_values('Week_Start')
         trend_data['Label'] = trend_data['Week_Start'].apply(lambda x: f"W/C {x.strftime('%d %b')}")
         
+        section("Trailing 8-Week Placement Trend Lookback")
         fig_trend = go.Figure(go.Scatter(
             x=trend_data['Label'], y=trend_data['Placements'],
             mode='lines+markers+text',
@@ -458,15 +474,54 @@ with tab1:
         ))
         fig_trend.update_layout(**PLOT_LAYOUT, height=220)
         st.plotly_chart(fig_trend, use_container_width=True, config={"displayModeBar": False}, key="8_week_trend_line_chart")
+        
+        # ── CLIENT X WEEK CROSS-TAB MATRIX TABLE COMPONENT ──
+        section("Client × Week Matrix View (FT Volume & WoW Changes)")
+        
+        # Pivot tracking dataset into matrix structure
+        matrix_src = df_trend.groupby(['company_name', 'Week_Start']).size().unstack(fill_value=0)
+        
+        # Map chronological labels safely across existing dimensions
+        header_labels = [f"W/C {w.strftime('%d %b')}" for w in active_weeks]
+        
+        # Build custom HTML table container
+        m_tbl = '<div class="tw" style="overflow-x:auto;"><table class="dash-table"><thead><tr>'
+        m_tbl += '<th>Client Profile</th>'
+        for lbl in header_labels:
+            m_tbl += f'<th class="n" style="min-width:105px;">{lbl}</th>'
+        m_tbl += '</tr></thead><tbody>'
+        
+        for client_name, row in matrix_src.iterrows():
+            m_tbl += f'<tr><td style="font-weight:600;">{client_name}</td>'
+            for idx, week_monday in enumerate(active_weeks):
+                val = row.get(week_monday, 0)
+                
+                # Compute relative WoW shifts inside trailing vectors
+                if idx == 0:
+                    wow_str = '<span style="font-size:10px; color:var(--muted);">Base</span>'
+                else:
+                    prev_week_monday = active_weeks[idx - 1]
+                    prev_val = row.get(prev_week_monday, 0)
+                    if prev_val > 0:
+                        wow_pct = ((val - prev_val) / prev_val) * 100
+                        color = "var(--green)" if wow_pct >= 0 else "var(--red)"
+                        wow_str = f'<span style="font-size:10px; color:{color}; font-weight:700;">{wow_pct:+.1f}%</span>'
+                    else:
+                        wow_str = f'<span style="font-size:10px; color:var(--green); font-weight:700;">+100%</span>' if val > 0 else '<span style="font-size:10px; color:var(--muted);">0%</span>'
+                
+                m_tbl += f'<td class="n"><div style="font-weight:600;">{val:,}</div><div>{wow_str}</div></td>'
+            m_tbl += '</tr>'
+            
+        m_tbl += '</tbody></table></div>'
+        st.markdown(m_tbl, unsafe_allow_html=True)
     else:
-        st.info("Insufficient longitudinal data matches available to generate line profiles.")
+        st.info("Insufficient longitudinal data records match target metrics filters.")
 
     # Main Client Performance Execution Matrix
     section("All Clients Performance Analysis")
     c_col, c_desc = draw_sortable_header("client_main", [("Client Name", "Client", 4), ("Current FT", "cur", 2), ("Previous FT", "prv", 2), ("Δ Vol", "delta", 2), ("Δ %", "pct", 2)])
     client_mat = client_mat.sort_values(c_col, ascending=not c_desc)
 
-    max_c = client_mat["cur"].max() or 1
     t_html = '<div class="tw"><table class="dash-table"><tbody>'
     for _, r in client_mat.iterrows():
         t_html += f"""<tr>
@@ -500,7 +555,7 @@ with tab1:
     else:
         st.info("No segments meet expansion target profile bounds currently.")
 
-    # ── Move and Make Dynamic: Vendor Laggards & Leaders Row moved from Tab 2 to Tab 1 ──
+    # ── Relocated Dynamic Vendor Lines Table Placement Row ──
     section("Dynamic Vendor Line (VL) Analytics Tracker")
     vl_left, vl_right = st.columns(2)
     
@@ -626,7 +681,7 @@ with tab2:
         st.info("No regional clusters are displaying expansion metrics currently.")
 
 # ==============================================================================
-# TAB 3: AI INSIGHT SUMMARY & RCA
+# TAB 3: AI NARRATIVE & RCA
 # ==============================================================================
 with tab3:
     section("Programmatic Executive Summary & Attribution (Placements Only)")
