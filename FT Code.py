@@ -93,7 +93,6 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   box-shadow: 0 0 6px var(--green-b);
   animation: pulse 2s infinite;
 }
-@st.experimental_dialog
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
 .sec-ttl {
@@ -165,24 +164,11 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   border-collapse: collapse;
   font-size: 12px;
 }
-.dash-table th {
-  text-align: left;
-  font-size: 10px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  padding: 8px 12px;
-  border-bottom: 0.5px solid var(--br2);
-  background: var(--surface2);
-  font-weight: 700;
-  white-space: nowrap;
-}
 .dash-table td {
   padding: 8px 12px;
   border-bottom: 0.5px solid var(--br);
   color: var(--text);
   white-space: nowrap;
-  vertical-align: middle;
 }
 .dash-table tr:last-child td { border-bottom: none; }
 .dash-table tr:hover td { background: var(--surface2); }
@@ -216,7 +202,6 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   color: var(--muted);
   margin-bottom: 10px;
 }
-.rca-body { font-size: 13px; line-height: 1.75; color: var(--text); }
 .rca-item {
   display: flex;
   gap: 10px;
@@ -397,7 +382,7 @@ def compute_comparison_matrix(dataframe, group_key):
 def draw_sortable_header(table_id, col_specs):
     state_key = f"sort_state_{table_id}"
     if state_key not in st.session_state:
-        st.session_state[state_key] = (col_specs[0][1], False) # Default to column first, descending=False
+        st.session_state[state_key] = (col_specs[0][1], False)
 
     current_col, current_desc = st.session_state[state_key]
     grid_cols = st.columns([spec[2] for spec in col_specs])
@@ -425,11 +410,17 @@ def bar_chart(df_in, x_col, y_cols, labels, colors, title="", height=240, key=No
     fig.update_layout(**layout)
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
 
-# ── Primary Metric Variables ──────────────────────────────────────────────────
+# ── Primary Metric Matrices Engine Calculations ──────────────────────────────
 cur_tot = len(df[(df[ft] >= cs) & (df[ft] <= ce)])
 prv_tot = len(df[(df[ft] >= ps) & (df[ft] <= pe)])
 dlt_tot = cur_tot - prv_tot
 pct_tot = (dlt_tot / prv_tot * 100) if prv_tot > 0 else np.nan
+
+client_mat = compute_comparison_matrix(df, "company_name").reset_index()
+client_mat.columns = ["Client", "cur", "prv", "delta", "pct"]
+
+vl_master = compute_comparison_matrix(df, "vl_name").reset_index()
+vl_master.columns = ["VL", "cur", "prv", "delta", "pct"]
 
 # ── Tab Navigation Panels ─────────────────────────────────────────────────────
 tab1, tab2, tab3 = st.tabs(["📦 Client Operations", "🗺️ Region & Area Allocations", "🤖 AI Narrative & RCA"])
@@ -444,7 +435,7 @@ with tab1:
     with k3: st.markdown(kpi_html("Δ Volume Shift", fmt(dlt_tot), pill_html=volume_pill(dlt_tot)), unsafe_allow_html=True)
     with k4: st.markdown(kpi_html("Δ % Shift", f"{pct_tot:+.1f}%" if pd.notna(pct_tot) else "—", pill_html=pill_markup(pct_tot)), unsafe_allow_html=True)
 
-    # 8-Week Placement Running Trend Lookback (Lines chart representation)
+    # Trailing 8-Week Placement Running Trend Lookback (Lines chart representation)
     section("Trailing 8-Week Placement Trend Lookback")
     df_trend = pd.DataFrame({ft: df[ft].dropna()})
     df_trend['datetime'] = pd.to_datetime(df_trend[ft])
@@ -471,9 +462,6 @@ with tab1:
         st.info("Insufficient longitudinal data matches available to generate line profiles.")
 
     # Main Client Performance Execution Matrix
-    client_mat = compute_comparison_matrix(df, "company_name").reset_index()
-    client_mat.columns = ["Client", "cur", "prv", "delta", "pct"]
-
     section("All Clients Performance Analysis")
     c_col, c_desc = draw_sortable_header("client_main", [("Client Name", "Client", 4), ("Current FT", "cur", 2), ("Previous FT", "prv", 2), ("Δ Vol", "delta", 2), ("Δ %", "pct", 2)])
     client_mat = client_mat.sort_values(c_col, ascending=not c_desc)
@@ -481,7 +469,6 @@ with tab1:
     max_c = client_mat["cur"].max() or 1
     t_html = '<div class="tw"><table class="dash-table"><tbody>'
     for _, r in client_mat.iterrows():
-        bar_w = int(min(100, r["cur"] / max_c * 100))
         t_html += f"""<tr>
             <td style="width:33.3%; font-weight:600;">{r['Client']}</td>
             <td class="n" style="width:16.6%;">{fmt(r['cur'])}</td>
@@ -512,6 +499,42 @@ with tab1:
         st.markdown(t_html, unsafe_allow_html=True)
     else:
         st.info("No segments meet expansion target profile bounds currently.")
+
+    # ── Move and Make Dynamic: Vendor Laggards & Leaders Row moved from Tab 2 to Tab 1 ──
+    section("Dynamic Vendor Line (VL) Analytics Tracker")
+    vl_left, vl_right = st.columns(2)
+    
+    with vl_left:
+        section("Top 10 Degrowing Vendor Lines (VL)")
+        degrow_vl = vl_master[vl_master["delta"] < 0].nsmallest(10, "delta")
+        dv_col, dv_desc = draw_sortable_header("degrow_vl_table", [("Vendor Partner Line (VL)", "VL", 5), ("Current FT", "cur", 2), ("Δ Deficit", "delta", 3)])
+        degrow_vl = degrow_vl.sort_values(dv_col, ascending=not dv_desc)
+        
+        t_html = '<div class="tw"><table class="dash-table"><tbody>'
+        for _, r in degrow_vl.iterrows():
+            t_html += f"""<tr>
+                <td style="width:50%; font-weight:600;">{r['VL']}</td>
+                <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                <td class="n" style="width:30%;">{volume_pill(r['delta'])}</td>
+            </tr>"""
+        t_html += "</tbody></table></div>"
+        st.markdown(t_html, unsafe_allow_html=True)
+
+    with vl_right:
+        section("Top 10 Growing Vendor Lines (VL)")
+        grow_vl = vl_master[vl_master["delta"] > 0].nlargest(10, "delta")
+        gv_col, gv_desc = draw_sortable_header("grow_vl_table", [("Vendor Partner Line (VL)", "VL", 5), ("Current FT", "cur", 2), ("Δ Surge", "delta", 3)])
+        grow_vl = grow_vl.sort_values(gv_col, ascending=not gv_desc)
+        
+        t_html = '<div class="tw"><table class="dash-table"><tbody>'
+        for _, r in grow_vl.iterrows():
+            t_html += f"""<tr>
+                <td style="width:50%; font-weight:600; color:var(--green);">{r['VL']}</td>
+                <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                <td class="n" style="width:30%;">{volume_pill(r['delta'])}</td>
+            </tr>"""
+        t_html += "</tbody></table></div>"
+        st.markdown(t_html, unsafe_allow_html=True)
 
 # ==============================================================================
 # TAB 2: REGION & AREA ALLOCATIONS
@@ -579,7 +602,7 @@ with tab2:
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
     else:
-        st.info("No matching accounts logged performance shortfall vectors during this window range.")
+        st.info("No tracking accounts logged performance shortfall vectors during this window range.")
 
     # Growing Regions — by MTD Δ%
     section("Growing Regions Profile — Ranked by % Surge")
@@ -602,48 +625,11 @@ with tab2:
     else:
         st.info("No regional clusters are displaying expansion metrics currently.")
 
-    # Vendor lines (VL) deep dives
-    vl_master = compute_comparison_matrix(df, "vl_name").reset_index()
-    vl_master.columns = ["VL", "cur", "prv", "delta", "pct"]
-
-    vl_left, vl_right = st.columns(2)
-    with vl_left:
-        section("Top 10 Degrowing Vendor Lines (VL) — by Target Gap")
-        degrow_vl = vl_master[vl_master["delta"] < 0].nsmallest(10, "delta")
-        dv_col, dv_desc = draw_sortable_header("degrow_vl_table", [("Vendor Partner Line (VL)", "VL", 5), ("Current FT", "cur", 2), ("Δ Deficit", "delta", 3)])
-        degrow_vl = degrow_vl.sort_values(dv_col, ascending=not dv_desc)
-        
-        t_html = '<div class="tw"><table class="dash-table"><tbody>'
-        for _, r in degrow_vl.iterrows():
-            t_html += f"""<tr>
-                <td style="width:50%; font-weight:600;">{r['VL']}</td>
-                <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
-                <td class="n" style="width:30%;">{volume_pill(r['delta'])}</td>
-            </tr>"""
-        t_html += "</tbody></table></div>"
-        st.markdown(t_html, unsafe_allow_html=True)
-
-    with vl_right:
-        section("Top 10 Growing Vendor Lines (VL) — by MTD Δ")
-        grow_vl = vl_master[vl_master["delta"] > 0].nlargest(10, "delta")
-        gv_col, gv_desc = draw_sortable_header("grow_vl_table", [("Vendor Partner Line (VL)", "VL", 5), ("Current FT", "cur", 2), ("Δ Surge", "delta", 3)])
-        grow_vl = grow_vl.sort_values(gv_col, ascending=not gv_desc)
-        
-        t_html = '<div class="tw"><table class="dash-table"><tbody>'
-        for _, r in grow_vl.iterrows():
-            t_html += f"""<tr>
-                <td style="width:50%; font-weight:600; color:var(--green);">{r['VL']}</td>
-                <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
-                <td class="n" style="width:30%;">{volume_pill(r['delta'])}</td>
-            </tr>"""
-        t_html += "</tbody></table></div>"
-        st.markdown(t_html, unsafe_allow_html=True)
-
 # ==============================================================================
-# TAB 3: AI NARRATIVE & RCA
+# TAB 3: AI INSIGHT SUMMARY & RCA
 # ==============================================================================
 with tab3:
-    section("Programmatic Executive Summary & Attribution")
+    section("Programmatic Executive Summary & Attribution (Placements Only)")
     
     # Pool operational delta mutations across metrics exclusively tracking final placement volume
     pool = []
@@ -665,7 +651,7 @@ with tab3:
         Data matching current parameters logs {trend_term} yielding a global net variation of 
         <strong style="color:{hl_color}">{fmt(dlt_tot)} total placements (FT)</strong> ({pct_tot:+.1f}%) 
         compared to the relative historical cycle baseline. Absolute volume shifted from <strong>{fmt(prv_tot)}</strong> 
-        units down to <strong>{fmt(cur_tot)}</strong> active placements inside the evaluated window frame.
+        units to <strong>{fmt(cur_tot)}</strong> active placements inside the evaluated window frame.
       </div>
     </div>""", unsafe_allow_html=True)
 
