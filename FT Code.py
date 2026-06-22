@@ -202,6 +202,7 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   color: var(--muted);
   margin-bottom: 10px;
 }
+.rca-body { font-size: 13px; line-height: 1.75; color: var(--text); }
 .rca-item {
   display: flex;
   gap: 10px;
@@ -305,29 +306,42 @@ df_base = raw.copy()
 ft = "first_date_of_work"
 df_base[ft] = pd.to_datetime(df_base[ft], errors="coerce").dt.date
 
-# ── Dynamic Time Windows ──────────────────────────────────────────────────────
-today = datetime.date.today()
-yesterday = today - datetime.timedelta(days=1)
-
+# ── Dynamic Time Windows (With Full Lookback Exclusion Offsets) ───────────────
 st.sidebar.markdown("### 🎛️ Parameters")
 mode = st.sidebar.selectbox("Comparison Window Mode", ["WTD", "MTD"])
-
-# ── Incomplete Week Exclusion Toggle ──
 exclude_current = st.sidebar.checkbox("Exclude Current Incomplete Week", value=False)
 
-if mode == "WTD":
-    dow = today.weekday()
-    cs, ce = today - datetime.timedelta(days=dow), yesterday
-    ps, pe = cs - datetime.timedelta(weeks=1), ce - datetime.timedelta(weeks=1)
-else:
-    cs, ce = today.replace(day=1), yesterday
-    pm, py = (today.month - 1 or 12), (today.year if today.month > 1 else today.year - 1)
-    prev_start = today.replace(year=py, month=pm, day=1)
-    ps, pe = prev_start, prev_start + datetime.timedelta(days=(ce - cs).days)
+def get_windows(mode, exclude_current):
+    today     = datetime.date.today()
+    yesterday = today - datetime.timedelta(days=1)
+    if mode == "WTD":
+        dow = today.weekday()
+        if exclude_current:
+            # Shift anchor to isolate the last complete week (Monday to Sunday)
+            cs = today - datetime.timedelta(days=dow + 7)
+            ce = cs + datetime.timedelta(days=6)
+            ps = cs - datetime.timedelta(days=7)
+            pe = ps + datetime.timedelta(days=6)
+        else:
+            cs = today - datetime.timedelta(days=dow)
+            ce = yesterday
+            ps = cs - datetime.timedelta(weeks=1)
+            pe = ce - datetime.timedelta(weeks=1)
+    else:
+        cs = today.replace(day=1)
+        ce = yesterday
+        pm = today.month - 1 or 12
+        py = today.year if today.month > 1 else today.year - 1
+        prev_start = today.replace(year=py, month=pm, day=1)
+        offset = (ce - cs).days
+        ps = prev_start
+        pe = prev_start + datetime.timedelta(days=offset)
+    return cs, ce, ps, pe
 
-# ── Global Sidebar Segment Filters (Upgraded to State-Retaining Multi-Select) ──
+cs, ce, ps, pe = get_windows(mode, exclude_current)
+
+# ── Global Sidebar Segment Filters ────────────────────────────────────────────
 st.sidebar.markdown("### 🔍 Segment Filters")
-
 client_opts = sorted(list(df_base["company_name"].dropna().unique()))
 selected_clients = st.sidebar.multiselect("Client Scope", client_opts, key="global_filter_client")
 
@@ -337,18 +351,22 @@ selected_cities = st.sidebar.multiselect("City Scope", city_opts, key="global_fi
 vl_opts = sorted(list(df_base["vl_name"].dropna().unique()))
 selected_vls = st.sidebar.multiselect("Vendor Line Scope", vl_opts, key="global_filter_vl")
 
-# Cascade filter layers down sequentially onto operational processing dataframe using isin()
+# Support new Cluster Lead column filtering elegantly
+cl_opts = sorted(list(df_base["CL"].dropna().unique())) if "CL" in df_base.columns else []
+selected_cls = st.sidebar.multiselect("Cluster Lead (CL) Scope", cl_opts, key="global_filter_cl")
+
 df = df_base.copy()
 if selected_clients: df = df[df["company_name"].isin(selected_clients)]
 if selected_cities:  df = df[df["jobCity"].isin(selected_cities)]
 if selected_vls:     df = df[df["vl_name"].isin(selected_vls)]
+if selected_cls and "CL" in df.columns: df = df[df["CL"].isin(selected_cls)]
 
 # ── Header Markup Execution ───────────────────────────────────────────────────
 st.markdown(f"""
 <div class="dash-header">
   <div>
     <div class="dash-title">Vahan <span>Performance Analytics</span> Dashboard</div>
-    <div class="dash-meta"><span class="live-dot"></span>Live Lookback Tracking · Active Bounds as of Yesterday</div>
+    <div class="dash-meta"><span class="live-dot"></span>Live Tracking View · Selected boundaries applied</div>
   </div>
   <div><span class="pill pb" style="font-size:11px;">Current: {cs.strftime('%b %d')} - {ce.strftime('%b %d')} vs Previous: {ps.strftime('%b %d')} - {pe.strftime('%b %d')}</span></div>
 </div>""", unsafe_allow_html=True)
@@ -402,9 +420,6 @@ def draw_sortable_header(table_id, col_specs):
             st.rerun()
     return st.session_state[state_key]
 
-def section(title):
-    st.markdown(f'<div class="sec-ttl">{title}<div class="sec-ttl-line"></div></div>', unsafe_allow_html=True)
-
 # ── Primary Metric Matrices Engine Calculations ──────────────────────────────
 cur_tot = len(df[(df[ft] >= cs) & (df[ft] <= ce)])
 prv_tot = len(df[(df[ft] >= ps) & (df[ft] <= pe)])
@@ -418,7 +433,7 @@ vl_master = compute_comparison_matrix(df, "vl_name").reset_index()
 vl_master.columns = ["VL", "cur", "prv", "delta", "pct"]
 
 # ── Tab Navigation Panels ─────────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["📦 Client Operations", "🗺️ Region & Area Allocations", "🤖 AI Narrative & RCA"])
+tab1, tab2, tab3 = st.tabs(["📦 Client Operations", "🗺️ CL & Region Maps", "🤖 AI Narrative & RCA"])
 
 # ==============================================================================
 # TAB 1: CLIENT OPERATIONS
@@ -430,78 +445,82 @@ with tab1:
     with k3: st.markdown(kpi_html("Δ Volume Shift", fmt(dlt_tot), pill_html=volume_pill(dlt_tot)), unsafe_allow_html=True)
     with k4: st.markdown(kpi_html("Δ % Shift", f"{pct_tot:+.1f}%" if pd.notna(pct_tot) else "—", pill_html=pill_markup(pct_tot)), unsafe_allow_html=True)
 
-    # Trailing 8-Week Placement Running Trend Engine Setup
-    df_trend = df.copy()
-    df_trend['datetime'] = pd.to_datetime(df_trend[ft])
-    df_trend['Week_Start'] = df_trend['datetime'].dt.to_period('W').dt.start_time.dt.date
-    
-    dow = today.weekday()
-    this_week_monday = today - datetime.timedelta(days=dow)
-    
-    if exclude_current:
-        df_trend = df_trend[df_trend['Week_Start'] < this_week_monday]
+    # Conditional Chart Layout Rule
+    if mode == "WTD":
+        df_trend = df.copy()
+        df_trend['datetime'] = pd.to_datetime(df_trend[ft])
+        df_trend['Week_Start'] = df_trend['datetime'].dt.to_period('W').dt.start_time.dt.date
         
-    if not df_trend.empty:
-        max_trend_w = df_trend['Week_Start'].max()
-        active_weeks = [max_trend_w - datetime.timedelta(weeks=i) for i in range(7, -1, -1)]
-        df_trend = df_trend[df_trend['Week_Start'].isin(active_weeks)]
-        
-        trend_data = df_trend.groupby('Week_Start').size().reset_index(name='Placements')
-        trend_data = trend_data.sort_values('Week_Start')
-        trend_data['Label'] = trend_data['Week_Start'].apply(lambda x: f"W/C {x.strftime('%d %b')}")
-        
-        section("Trailing 8-Week Placement Trend Lookback")
-        fig_trend = go.Figure(go.Scatter(
-            x=trend_data['Label'], y=trend_data['Placements'],
-            mode='lines+markers+text',
-            line=dict(color=BAR_CUR, width=3),
-            text=trend_data['Placements'],
-            textposition="top center",
-            marker=dict(size=8, color=BAR_CUR)
-        ))
-        fig_trend.update_layout(**PLOT_LAYOUT, height=220)
-        st.plotly_chart(fig_trend, use_container_width=True, config={"displayModeBar": False}, key="8_week_trend_line_chart")
-        
-        # ── CLIENT X WEEK CROSS-TAB MATRIX TABLE COMPONENT ──
-        section("Client × Week Matrix View (FT Volume & WoW Changes)")
-        matrix_src = df_trend.groupby(['company_name', 'Week_Start']).size().unstack(fill_value=0)
-        
-        # Build custom header row array specifications using weeks
-        col_specs_week = [("Client Profile", "Client", 3)] + [(f"W/C {w.strftime('%d %b')}", w, 1) for w in active_weeks]
-        w_col, w_desc = draw_sortable_header("client_week_matrix", col_specs_week)
-        
-        # Apply sorting logic states safely to pivoted structures
-        if w_col == "Client":
-            matrix_src = matrix_src.sort_index(ascending=not w_desc)
-        else:
-            matrix_src = matrix_src.sort_values(by=w_col, ascending=not w_desc)
+        dow = today.weekday()
+        this_week_monday = today - datetime.timedelta(days=dow)
+        if exclude_current:
+            df_trend = df_trend[df_trend['Week_Start'] < this_week_monday]
             
-        m_tbl = '<div class="tw" style="overflow-x:auto;"><table class="dash-table"><tbody>'
-        
-        for client_name, row in matrix_src.iterrows():
-            m_tbl += f'<tr><td style="width: 27.2%; font-weight:600;">{client_name}</td>'
-            for idx, week_monday in enumerate(active_weeks):
-                val = row.get(week_monday, 0)
+        if not df_trend.empty:
+            max_trend_w = df_trend['Week_Start'].max()
+            active_weeks = [max_trend_w - datetime.timedelta(weeks=i) for i in range(7, -1, -1)]
+            df_trend = df_trend[df_trend['Week_Start'].isin(active_weeks)]
+            
+            trend_data = df_trend.groupby('Week_Start').size().reset_index(name='Placements')
+            trend_data = trend_data.sort_values('Week_Start')
+            trend_data['Label'] = trend_data['Week_Start'].apply(lambda x: f"W/C {x.strftime('%d %b')}")
+            
+            section("Trailing 8-Week Placement Trend Lookback")
+            fig_trend = go.Figure(go.Scatter(
+                x=trend_data['Label'], y=trend_data['Placements'], mode='lines+markers+text',
+                line=dict(color=BAR_CUR, width=3), text=trend_data['Placements'], textposition="top center",
+                marker=dict(size=8, color=BAR_CUR)
+            ))
+            fig_trend.update_layout(**PLOT_LAYOUT, height=220)
+            st.plotly_chart(fig_trend, use_container_width=True, config={"displayModeBar": False}, key="8_week_trend_line_chart")
+            
+            # Client x Week Matrix View Table
+            section("Client × Week Matrix View (FT Volume & WoW Changes)")
+            matrix_src = df_trend.groupby(['company_name', 'Week_Start']).size().unstack(fill_value=0)
+            col_specs_week = [("Client Profile", "Client", 3)] + [(f"W/C {w.strftime('%d %b')}", w, 1) for w in active_weeks]
+            w_col, w_desc = draw_sortable_header("client_week_matrix", col_specs_week)
+            
+            if w_col == "Client": matrix_src = matrix_src.sort_index(ascending=not w_desc)
+            else: matrix_src = matrix_src.sort_values(by=w_col, ascending=not w_desc)
                 
-                if idx == 0:
-                    wow_str = '<span style="font-size:10px; color:var(--muted);">Base</span>'
-                else:
-                    prev_week_monday = active_weeks[idx - 1]
-                    prev_val = row.get(prev_week_monday, 0)
-                    if prev_val > 0:
-                        wow_pct = ((val - prev_val) / prev_val) * 100
-                        color = "var(--green)" if wow_pct >= 0 else "var(--red)"
-                        wow_str = f'<span style="font-size:10px; color:{color}; font-weight:700;">{wow_pct:+.1f}%</span>'
+            m_tbl = '<div class="tw" style="overflow-x:auto;"><table class="dash-table"><tbody>'
+            for client_name, row in matrix_src.iterrows():
+                m_tbl += f'<tr><td style="width: 27.2%; font-weight:600;">{client_name}</td>'
+                for idx, week_monday in enumerate(active_weeks):
+                    val = row.get(week_monday, 0)
+                    if idx == 0:
+                        wow_str = '<span style="font-size:10px; color:var(--muted);">Base</span>'
                     else:
-                        wow_str = f'<span style="font-size:10px; color:var(--green); font-weight:700;">+100%</span>' if val > 0 else '<span style="font-size:10px; color:var(--muted);">0%</span>'
-                
-                m_tbl += f'<td class="n" style="width: 9.1%;"><div style="font-weight:600;">{val:,}</div><div>{wow_str}</div></td>'
-            m_tbl += '</tr>'
-            
-        m_tbl += '</tbody></table></div>'
-        st.markdown(m_tbl, unsafe_allow_html=True)
-    else:
-        st.info("Insufficient longitudinal data records match target metrics filters.")
+                        prev_week_monday = active_weeks[idx - 1]
+                        prev_val = row.get(prev_week_monday, 0)
+                        if prev_val > 0:
+                            wow_pct = ((val - prev_val) / prev_val) * 100
+                            color = "var(--green)" if wow_pct >= 0 else "var(--red)"
+                            wow_str = f'<span style="font-size:10px; color:{color}; font-weight:700;">{wow_pct:+.1f}%</span>'
+                        else:
+                            wow_str = f'<span style="font-size:10px; color:var(--green); font-weight:700;">+100%</span>' if val > 0 else '<span style="font-size:10px; color:var(--muted);">0%</span>'
+                    m_tbl += f'<td class="n" style="width: 9.1%;"><div style="font-weight:600;">{val:,}</div><div>{wow_str}</div></td>'
+                m_tbl += '</tr>'
+            m_tbl += '</tbody></table></div>'
+            st.markdown(m_tbl, unsafe_allow_html=True)
+
+    elif mode == "MTD":
+        # ── Day-of-Month Run-Rate Performance View ──
+        section("Month-To-Date (MTD) Day-by-Day Run-Rate Tracking")
+        sub_cur = df[(df[ft] >= cs) & (df[ft] <= ce)]
+        sub_prv = df[(df[ft] >= ps) & (df[ft] <= pe)]
+        
+        cur_days = sub_cur.groupby(sub_cur[ft].apply(lambda x: x.day)).size().rename("Current Month")
+        prv_days = sub_prv.groupby(sub_prv[ft].apply(lambda x: x.day)).size().rename("Previous Month")
+        
+        mtd_trend = pd.concat([cur_days, prv_days], axis=1).fillna(0).reset_index()
+        mtd_trend.columns = ["Day of Month", "Current Month", "Previous Month"]
+        
+        fig_mtd = go.Figure()
+        fig_mtd.add_trace(go.Scatter(x=mtd_trend["Day of Month"], y=mtd_trend["Previous Month"], name="Previous Month Baseline", mode='lines', line=dict(color=BAR_PRV, width=2, dash='dot')))
+        fig_mtd.add_trace(go.Scatter(x=mtd_trend["Day of Month"], y=mtd_trend["Current Month"], name="Current Month Runrate", mode='lines+markers', line=dict(color=BAR_CUR, width=3)))
+        fig_mtd.update_layout(**PLOT_LAYOUT, height=240, showlegend=True)
+        st.plotly_chart(fig_mtd, use_container_width=True, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
     # Main Client Performance Execution Matrix
     section("All Clients Performance Analysis")
@@ -541,7 +560,7 @@ with tab1:
     else:
         st.info("No segments meet expansion target profile bounds currently.")
 
-    # Dynamic Vendor Lines Table Placement Row
+    # Dynamic Vendor Lines Tables
     section("Dynamic Vendor Line (VL) Analytics Tracker")
     vl_left, vl_right = st.columns(2)
     
@@ -578,14 +597,11 @@ with tab1:
         st.markdown(t_html, unsafe_allow_html=True)
 
 # ==============================================================================
-# TAB 2: REGION & AREA ALLOCATIONS
+# TAB 2: CL & REGION MAPS
 # ==============================================================================
 with tab2:
     reg_mat = compute_comparison_matrix(df, "region").reset_index()
     reg_mat.columns = ["Region", "cur", "prv", "delta", "pct"]
-    
-    am_mat = compute_comparison_matrix(df, "am_name").reset_index()
-    am_mat.columns = ["AM", "cur", "prv", "delta", "pct"]
 
     r_left, r_right = st.columns(2)
     with r_left:
@@ -605,22 +621,52 @@ with tab2:
         st.markdown(t_html, unsafe_allow_html=True)
 
     with r_right:
-        section("Account Manager Allocation Rankings")
-        am_col, am_desc = draw_sortable_header("am_main", [("Manager Name", "AM", 4), ("Current", "cur", 2), ("Δ Vol", "delta", 2), ("Δ %", "pct", 2)])
-        am_mat = am_mat.sort_values(am_col, ascending=not am_desc)
-        
-        t_html = '<div class="tw"><table class="dash-table"><tbody>'
-        for _, r in am_mat.iterrows():
-            t_html += f"""<tr>
-                <td style="width:40%; font-weight:600;">{r['AM']}</td>
-                <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
-                <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
-                <td class="n" style="width:20%;">{pill_markup(r['pct'])}</td>
-            </tr>"""
-        t_html += "</tbody></table></div>"
-        st.markdown(t_html, unsafe_allow_html=True)
+        section("Cluster Lead (CL) Allocations Table")
+        if "CL" in df.columns:
+            cl_mat = compute_comparison_matrix(df, "CL").reset_index()
+            cl_mat.columns = ["CL", "cur", "prv", "delta", "pct"]
+            cl_col, cl_desc = draw_sortable_header("cl_main_table", [("Cluster Lead", "CL", 4), ("Current", "cur", 2), ("Δ Vol", "delta", 2), ("Δ %", "pct", 2)])
+            cl_mat = cl_mat.sort_values(cl_col, ascending=not cl_desc)
+            
+            t_html = '<div class="tw"><table class="dash-table"><tbody>'
+            for _, r in cl_mat.iterrows():
+                t_html += f"""<tr>
+                    <td style="width:40%; font-weight:600;">{r['CL']}</td>
+                    <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
+                    <td class="n" style="width:20%;">{pill_markup(r['pct'])}</td>
+                </tr>"""
+            t_html += "</tbody></table></div>"
+            st.markdown(t_html, unsafe_allow_html=True)
+        else:
+            st.info("`CL` metadata parameter missing from core query.")
 
-    # Region Breakdown for Gap Clients (Shortfall Contributors)
+    # ── Interactive Cluster Lead to Account Manager Drilldown Mapping Component ──
+    if "CL" in df.columns and "am_name" in df.columns:
+        section("Interactive Drill-Down: Account Managers under Selected Cluster Lead")
+        cl_list = sorted(list(df["CL"].dropna().unique()))
+        if cl_list:
+            sel_drill_cl = st.selectbox("Select Cluster Lead for AM Drilldown", cl_list, key="cl_drill_selectbox")
+            if sel_drill_cl:
+                df_cl_drill = df[df["CL"] == sel_drill_cl]
+                am_drill_mat = compute_comparison_matrix(df_cl_drill, "am_name").reset_index()
+                am_drill_mat.columns = ["AM Name", "cur", "prv", "delta", "pct"]
+                
+                amd_col, amd_desc = draw_sortable_header("am_drill_table", [("Account Manager Name", "AM Name", 4), ("Current FT", "cur", 2), ("Δ Vol", "delta", 2), ("Δ %", "pct", 2)])
+                am_drill_mat = am_drill_mat.sort_values(amd_col, ascending=not amd_desc)
+                
+                t_html = '<div class="tw"><table class="dash-table"><tbody>'
+                for _, r in am_drill_mat.iterrows():
+                    t_html += f"""<tr>
+                        <td style="width:40%; font-weight:600; color:var(--blue);">{r['AM Name']}</td>
+                        <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                        <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
+                        <td class="n" style="width:20%;">{pill_markup(r['pct'])}</td>
+                    </tr>"""
+                t_html += "</tbody></table></div>"
+                st.markdown(t_html, unsafe_allow_html=True)
+
+    # Region Breakdown for Gap Clients
     section("Region Breakdown for Gap Clients (Shortfall Contributors Only)")
     gap_clients = client_mat[client_mat["delta"] < 0]["Client"].unique()
     if len(gap_clients) > 0:
@@ -642,8 +688,6 @@ with tab2:
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
-    else:
-        st.info("No matching accounts logged performance shortfall vectors during this window range.")
 
     # Growing Regions — by MTD Δ%
     section("Growing Regions Profile — Ranked by % Surge")
@@ -663,8 +707,6 @@ with tab2:
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
-    else:
-        st.info("No regional clusters are displaying expansion metrics currently.")
 
 # ==============================================================================
 # TAB 3: AI NARRATIVE & RCA
@@ -672,11 +714,12 @@ with tab2:
 with tab3:
     section("Programmatic Executive Summary & Attribution (Placements Only)")
     
-    # Pool operational delta mutations across metrics exclusively tracking final placement volume
     pool = []
     for _, r in client_mat.iterrows(): pool.append({"type": "Client Profile", "name": r["Client"], "delta": r["delta"]})
     for _, r in reg_mat.iterrows():    pool.append({"type": "Regional Cluster", "name": r["Region"], "delta": r["delta"]})
     for _, r in vl_master.iterrows():   pool.append({"type": "Vendor Line Partner (VL)", "name": r["VL"], "delta": r["delta"]})
+    if "CL" in df.columns and 'cl_mat' in locals():
+        for _, r in cl_mat.iterrows():   pool.append({"type": "Cluster Lead (CL)", "name": r["CL"], "delta": r["delta"]})
     
     m_df = pd.DataFrame(pool).dropna()
     leaders = m_df[m_df["delta"] > 0].nlargest(3, "delta")
