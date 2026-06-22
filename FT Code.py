@@ -16,7 +16,7 @@ st.set_page_config(
 # ── Design tokens & Premium Theme System ──────────────────────────────────────
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
 :root {
   --bg:        #0f1117;
@@ -123,9 +123,6 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   height:2px;
   background: linear-gradient(90deg, var(--blue-b), #b08cff);
 }
-.kpi-dark::before {
-  background: linear-gradient(90deg, var(--purple), var(--purple-bg)) !important;
-}
 .kpi-lbl {
   font-size: 10px;
   font-weight: 700;
@@ -167,11 +164,24 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   border-collapse: collapse;
   font-size: 12px;
 }
+.dash-table th {
+  text-align: left;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: 8px 12px;
+  border-bottom: 0.5px solid var(--br2);
+  background: var(--surface2);
+  font-weight: 700;
+  white-space: nowrap;
+}
 .dash-table td {
   padding: 8px 12px;
   border-bottom: 0.5px solid var(--br);
   color: var(--text);
   white-space: nowrap;
+  vertical-align: middle;
 }
 .dash-table tr:last-child td { border-bottom: none; }
 .dash-table tr:hover td { background: var(--surface2); }
@@ -205,6 +215,7 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   color: var(--muted);
   margin-bottom: 10px;
 }
+.rca-body { font-size: 13px; line-height: 1.75; color: var(--text); }
 .rca-item {
   display: flex;
   gap: 10px;
@@ -349,7 +360,6 @@ days_elapsed = (ce - cs).days + 1
 if mode == "WTD":
     total_days = 7
 else:
-    # Compute total days in current calendar month dynamically
     next_month = cs.replace(day=28) + datetime.timedelta(days=4)
     total_days = (next_month - datetime.timedelta(days=next_month.day)).day
 
@@ -438,6 +448,16 @@ def draw_sortable_header(table_id, col_specs):
 def section(title):
     st.markdown(f'<div class="sec-ttl">{title}<div class="sec-ttl-line"></div></div>', unsafe_allow_html=True)
 
+def bar_chart(df_in, x_col, y_cols, labels, colors, title="", height=240, key=None):
+    fig = go.Figure()
+    for y, lbl, col in zip(y_cols, labels, colors):
+        fig.add_trace(go.Bar(x=df_in[x_col], y=df_in[y], name=lbl, marker_color=col, marker_line_width=0))
+    layout = dict(**PLOT_LAYOUT)
+    layout["height"] = height
+    layout["title"]  = dict(text=title, font=dict(size=12, color="#eaeaea"), x=0)
+    fig.update_layout(**layout)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
+
 # ── Primary Metric Matrices Engine Calculations ──────────────────────────────
 cur_tot = len(df[(df[ft] >= cs) & (df[ft] <= ce)])
 prv_tot = len(df[(df[ft] >= ps) & (df[ft] <= pe)])
@@ -494,7 +514,6 @@ with tab1:
             fig_trend.update_layout(**PLOT_LAYOUT, height=220)
             st.plotly_chart(fig_trend, use_container_width=True, config={"displayModeBar": False}, key="8_week_trend_line_chart")
             
-            # Client x Week Matrix View Table
             section("Client × Week Matrix View (FT Volume & WoW Changes)")
             matrix_src = df_trend.groupby(['company_name', 'Week_Start']).size().unstack(fill_value=0)
             col_specs_week = [("Client Profile", "Client", 3)] + [(f"W/C {w.strftime('%d %b')}", w, 1) for w in active_weeks]
@@ -525,7 +544,6 @@ with tab1:
             st.markdown(m_tbl, unsafe_allow_html=True)
 
     elif mode == "MTD":
-        # Day-of-Month Run-Rate Performance View
         section("Month-To-Date (MTD) Day-by-Day Run-Rate Tracking")
         sub_cur = df[(df[ft] >= cs) & (df[ft] <= ce)]
         sub_prv = df[(df[ft] >= ps) & (df[ft] <= pe)]
@@ -539,10 +557,14 @@ with tab1:
         fig_mtd = go.Figure()
         fig_mtd.add_trace(go.Scatter(x=mtd_trend["Day of Month"], y=mtd_trend["Previous Month"], name="Previous Month Baseline", mode='lines', line=dict(color=BAR_PRV, width=2, dash='dot')))
         fig_mtd.add_trace(go.Scatter(x=mtd_trend["Day of Month"], y=mtd_trend["Current Month"], name="Current Month Runrate", mode='lines+markers', line=dict(color=BAR_CUR, width=3)))
-        fig_mtd.update_layout(**PLOT_LAYOUT, height=240, showlegend=True)
+        
+        mtd_layout = dict(**PLOT_LAYOUT)
+        mtd_layout["showlegend"] = True
+        mtd_layout["height"] = 240
+        fig_mtd.update_layout(**mtd_layout)
         st.plotly_chart(fig_mtd, use_container_width=True, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
-    # Main Client Performance Execution Matrix (With Projected Column)
+    # Main Client Performance Execution Matrix
     section("All Clients Performance Analysis")
     c_col, c_desc = draw_sortable_header("client_main", [("Client Name", "Client", 3), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Previous FT", "prv", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
     client_mat = client_mat.sort_values(c_col, ascending=not c_desc)
@@ -560,7 +582,7 @@ with tab1:
     t_html += "</tbody></table></div>"
     st.markdown(t_html, unsafe_allow_html=True)
 
-    # Growing Clients Table — by MTD Δ%
+    # Growing Clients Table
     section("Growing Clients Matrix — Ranked by % Surge")
     growing_clients = client_mat[client_mat["delta"] > 0]
     if not growing_clients.empty:
@@ -667,7 +689,6 @@ with tab2:
         else:
             st.info("`CL` metadata parameter missing from core query.")
 
-    # Interactive Cluster Lead to Account Manager Drilldown Mapping Component
     if "CL" in df.columns and "am_name" in df.columns:
         section("Interactive Drill-Down: Account Managers under Selected Cluster Lead")
         cl_list = sorted(list(df["CL"].dropna().unique()))
@@ -693,7 +714,6 @@ with tab2:
                 t_html += "</tbody></table></div>"
                 st.markdown(t_html, unsafe_allow_html=True)
 
-    # Region Breakdown for Gap Clients
     section("Region Breakdown for Gap Clients (Shortfall Contributors Only)")
     gap_clients = client_mat[client_mat["delta"] < 0]["Client"].unique()
     if len(gap_clients) > 0:
@@ -716,7 +736,6 @@ with tab2:
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
 
-    # Growing Regions — by MTD Δ%
     section("Growing Regions Profile — Ranked by % Surge")
     growing_regions = reg_mat[reg_mat["delta"] > 0]
     if not growing_regions.empty:
