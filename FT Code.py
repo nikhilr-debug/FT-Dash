@@ -189,17 +189,6 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
 .td-bold { font-weight: 600; }
 .td-muted { color: var(--muted); font-size: 11px; }
 
-.bwrap {
-  height: 4px;
-  background: var(--surface3);
-  border-radius: 2px;
-  display: inline-block;
-  vertical-align: middle;
-  width: 56px;
-  margin-right: 6px;
-}
-.bfill { height: 4px; border-radius: 2px; background: var(--blue-b); }
-
 .rca-card {
   background: var(--surface);
   border: 0.5px solid var(--br);
@@ -296,8 +285,6 @@ PLOT_LAYOUT = dict(
 
 BAR_CUR  = "#2f7dd4"
 BAR_PRV  = "#4a4f6a"
-BAR_POS  = "#4a9e2f"
-BAR_NEG  = "#e05252"
 
 # ── Data Fetch Pipelines ──────────────────────────────────────────────────────
 API_URL = "https://redash.vahan.link/api/queries/17613/results.json?api_key=4aFm2iOoyx8I91svQccdeZr0jmaiUsMFSRinZcmu"
@@ -316,6 +303,11 @@ raw = fetch_data()
 if raw.empty: st.stop()
 
 df_base = raw.copy()
+
+# Normalize 'cl' to 'CL' to avoid KeyError from lowercase SQL alias returns
+if "cl" in df_base.columns:
+    df_base.rename(columns={"cl": "CL"}, inplace=True)
+
 ft = "first_date_of_work"
 df_base[ft] = pd.to_datetime(df_base[ft], errors="coerce").dt.date
 
@@ -325,7 +317,7 @@ yesterday = today - datetime.timedelta(days=1)
 
 # ── Sidebar Controls ──────────────────────────────────────────────────────────
 st.sidebar.markdown("### 🛠️ Data Controls")
-if st.sidebar.button("🔄 Force Refresh Data", type="primary"):
+if st.sidebar.button("🔄 Force Refresh Data", type="primary", width="stretch"):
     st.cache_data.clear()
     st.rerun()
 
@@ -427,7 +419,6 @@ def compute_comparison_matrix(dataframe, group_key):
     p = dataframe[(dataframe[ft] >= ps) & (dataframe[ft] <= pe)].groupby(group_key).size().rename("prv")
     res = pd.concat([c, p], axis=1)
     
-    # Safe guards for when segment returns zero results
     if "cur" not in res.columns: res["cur"] = 0
     if "prv" not in res.columns: res["prv"] = 0
         
@@ -458,16 +449,6 @@ def draw_sortable_header(table_id, col_specs):
 def section(title):
     st.markdown(f'<div class="sec-ttl">{title}<div class="sec-ttl-line"></div></div>', unsafe_allow_html=True)
 
-def bar_chart(df_in, x_col, y_cols, labels, colors, title="", height=240, key=None):
-    fig = go.Figure()
-    for y, lbl, col in zip(y_cols, labels, colors):
-        fig.add_trace(go.Bar(x=df_in[x_col], y=df_in[y], name=lbl, marker_color=col, marker_line_width=0))
-    layout = dict(**PLOT_LAYOUT)
-    layout["height"] = height
-    layout["title"]  = dict(text=title, font=dict(size=12, color="#eaeaea"), x=0)
-    fig.update_layout(**layout)
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=key)
-
 # ── Primary Metric Matrices Engine Calculations ──────────────────────────────
 cur_tot = len(df[(df[ft] >= cs) & (df[ft] <= ce)])
 prv_tot = len(df[(df[ft] >= ps) & (df[ft] <= pe)])
@@ -495,7 +476,6 @@ with tab1:
     with k4: st.markdown(kpi_html("Δ Volume Shift", fmt(dlt_tot), pill_html=volume_pill(dlt_tot)), unsafe_allow_html=True)
     with k5: st.markdown(kpi_html("Δ % Shift", f"{pct_tot:+.1f}%" if pd.notna(pct_tot) else "—", pill_html=pill_markup(pct_tot)), unsafe_allow_html=True)
 
-    # Conditional Chart Layout Rule
     if mode == "WTD":
         df_trend = df.copy()
         df_trend['datetime'] = pd.to_datetime(df_trend[ft])
@@ -570,6 +550,7 @@ with tab1:
         
         mtd_layout = dict(**PLOT_LAYOUT)
         mtd_layout["height"] = 240
+        mtd_layout["showlegend"] = True
         fig_mtd.update_layout(**mtd_layout)
         st.plotly_chart(fig_mtd, width="stretch", config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
@@ -620,36 +601,42 @@ with tab1:
     with vl_left:
         section("Top 10 Degrowing Vendor Lines (VL)")
         degrow_vl = vl_master[vl_master["delta"] < 0].nsmallest(10, "delta")
-        dv_col, dv_desc = draw_sortable_header("degrow_vl_table", [("Vendor Partner Line (VL)", "VL", 4), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Δ Deficit", "delta", 2)])
-        degrow_vl = degrow_vl.sort_values(dv_col, ascending=not dv_desc)
-        
-        t_html = '<div class="tw"><table class="dash-table"><tbody>'
-        for _, r in degrow_vl.iterrows():
-            t_html += f"""<tr>
-                <td style="width:40%; font-weight:600;">{r['VL']}</td>
-                <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
-                <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
-            </tr>"""
-        t_html += "</tbody></table></div>"
-        st.markdown(t_html, unsafe_allow_html=True)
+        if not degrow_vl.empty:
+            dv_col, dv_desc = draw_sortable_header("degrow_vl_table", [("Vendor Partner Line (VL)", "VL", 4), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Δ Deficit", "delta", 2)])
+            degrow_vl = degrow_vl.sort_values(dv_col, ascending=not dv_desc)
+            
+            t_html = '<div class="tw"><table class="dash-table"><tbody>'
+            for _, r in degrow_vl.iterrows():
+                t_html += f"""<tr>
+                    <td style="width:40%; font-weight:600;">{r['VL']}</td>
+                    <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                    <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
+                </tr>"""
+            t_html += "</tbody></table></div>"
+            st.markdown(t_html, unsafe_allow_html=True)
+        else:
+            st.info("No vendor lines currently displaying contraction trends.")
 
     with vl_right:
         section("Top 10 Growing Vendor Lines (VL)")
         grow_vl = vl_master[vl_master["delta"] > 0].nlargest(10, "delta")
-        gv_col, gv_desc = draw_sortable_header("grow_vl_table", [("Vendor Partner Line (VL)", "VL", 4), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Δ Surge", "delta", 2)])
-        grow_vl = grow_vl.sort_values(gv_col, ascending=not gv_desc)
-        
-        t_html = '<div class="tw"><table class="dash-table"><tbody>'
-        for _, r in grow_vl.iterrows():
-            t_html += f"""<tr>
-                <td style="width:40%; font-weight:600; color:var(--green);">{r['VL']}</td>
-                <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
-                <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
-            </tr>"""
-        t_html += "</tbody></table></div>"
-        st.markdown(t_html, unsafe_allow_html=True)
+        if not grow_vl.empty:
+            gv_col, gv_desc = draw_sortable_header("grow_vl_table", [("Vendor Partner Line (VL)", "VL", 4), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Δ Surge", "delta", 2)])
+            grow_vl = grow_vl.sort_values(gv_col, ascending=not gv_desc)
+            
+            t_html = '<div class="tw"><table class="dash-table"><tbody>'
+            for _, r in grow_vl.iterrows():
+                t_html += f"""<tr>
+                    <td style="width:40%; font-weight:600; color:var(--green);">{r['VL']}</td>
+                    <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                    <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
+                </tr>"""
+            t_html += "</tbody></table></div>"
+            st.markdown(t_html, unsafe_allow_html=True)
+        else:
+            st.info("No vendor lines currently displaying expansion trends.")
 
 # ==============================================================================
 # TAB 2: CL & REGION MAPS
@@ -744,6 +731,8 @@ with tab2:
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
+    else:
+        st.info("No matching accounts logged performance shortfall vectors during this window range.")
 
     section("Growing Regions Profile — Ranked by % Surge")
     growing_regions = reg_mat[reg_mat["delta"] > 0]
@@ -762,6 +751,8 @@ with tab2:
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
+    else:
+        st.info("No regional clusters are displaying expansion metrics currently.")
 
 # ==============================================================================
 # TAB 3: AI NARRATIVE & RCA
