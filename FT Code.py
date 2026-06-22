@@ -55,15 +55,36 @@ html, body, [class*="css"], .stApp {
   line-height: 1.5;
 }
 
-/* FIXED: Hide Streamlit clutter but explicitly keep sidebar toggle arrow visible */
-#MainMenu, footer { display: none !important; }
-[data-testid="stToolbar"] { display: none !important; }
-header { background: transparent !important; }
-[data-testid="collapsedControl"] { 
-    visibility: visible !important; 
-    z-index: 1000000 !important; 
-    background-color: var(--surface) !important;
-    border-radius: 0 0 8px 0 !important;
+/* Ensure header is active so sidebar toggle works, but make it transparent */
+header { 
+  visibility: visible !important; 
+  background: transparent !important; 
+}
+/* Hide the Streamlit right-side menu and deploy buttons */
+[data-testid="stToolbar"], footer, #MainMenu { 
+  display: none !important; 
+}
+
+/* Force the Sidebar Toggle Arrow to become a highly visible floating button */
+[data-testid="collapsedControl"] {
+  background-color: var(--surface2) !important;
+  border: 1px solid var(--br2) !important;
+  border-radius: 8px !important;
+  margin: 15px !important;
+  box-shadow: 0px 4px 10px rgba(0,0,0,0.5) !important;
+  transition: 0.2s ease !important;
+  z-index: 999999 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+[data-testid="collapsedControl"]:hover {
+  background-color: var(--blue-bg) !important;
+  border-color: var(--blue-b) !important;
+}
+[data-testid="collapsedControl"] svg {
+  fill: var(--text) !important;
+  color: var(--text) !important;
 }
 
 .block-container {
@@ -445,7 +466,7 @@ def draw_sortable_header(table_id, col_specs):
     
     for idx, (label, field, weight) in enumerate(col_specs):
         icon = " ▴" if current_col == field and not current_desc else (" ▾" if current_col == field else "")
-        if grid_cols[idx].button(f"{label}{icon}", key=f"btn_{table_id}_{str(field)}", use_container_width=True):
+        if grid_cols[idx].button(f"{label}{icon}", key=f"btn_{table_id}_{str(field)}", width="stretch"):
             if current_col == field:
                 st.session_state[state_key] = (field, not current_desc)
             else:
@@ -455,6 +476,16 @@ def draw_sortable_header(table_id, col_specs):
 
 def section(title):
     st.markdown(f'<div class="sec-ttl">{title}<div class="sec-ttl-line"></div></div>', unsafe_allow_html=True)
+
+def bar_chart(df_in, x_col, y_cols, labels, colors, title="", height=240, key=None):
+    fig = go.Figure()
+    for y, lbl, col in zip(y_cols, labels, colors):
+        fig.add_trace(go.Bar(x=df_in[x_col], y=df_in[y], name=lbl, marker_color=col, marker_line_width=0))
+    layout = dict(**PLOT_LAYOUT)
+    layout["height"] = height
+    layout["title"]  = dict(text=title, font=dict(size=12, color="#eaeaea"), x=0)
+    fig.update_layout(**layout)
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=key)
 
 # ── Primary Metric Matrices Engine Calculations ──────────────────────────────
 cur_tot = len(df[(df[ft] >= cs) & (df[ft] <= ce)])
@@ -510,7 +541,7 @@ with tab1:
                 marker=dict(size=8, color=BAR_CUR)
             ))
             fig_trend.update_layout(**PLOT_LAYOUT, height=220)
-            st.plotly_chart(fig_trend, use_container_width=True, config={"displayModeBar": False}, key="8_week_trend_line_chart")
+            st.plotly_chart(fig_trend, width="stretch", config={"displayModeBar": False}, key="8_week_trend_line_chart")
             
             section("Client × Week Matrix View (FT Volume & WoW Changes)")
             matrix_src = df_trend.groupby(['company_name', 'Week_Start']).size().unstack(fill_value=0)
@@ -562,7 +593,7 @@ with tab1:
         mtd_layout["height"] = 240
         mtd_layout["showlegend"] = True
         fig_mtd.update_layout(**mtd_layout)
-        st.plotly_chart(fig_mtd, use_container_width=True, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
+        st.plotly_chart(fig_mtd, width="stretch", config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
     section("All Clients Performance Analysis")
     c_col, c_desc = draw_sortable_header("client_main", [("Client Name", "Client", 3), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Previous FT", "prv", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
