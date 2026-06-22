@@ -418,7 +418,6 @@ def kpi_html(label, value, sub="", pill_html=""):
       <div class="kpi-sub">{sub} {pill_html}</div>
     </div>"""
 
-# Safely compute comparison matrix bridging empty dataframe errors
 def compute_comparison_matrix(dataframe, group_key):
     c = dataframe[(dataframe[ft] >= cs) & (dataframe[ft] <= ce)].groupby(group_key).size().rename("cur")
     p = dataframe[(dataframe[ft] >= ps) & (dataframe[ft] <= pe)].groupby(group_key).size().rename("prv")
@@ -773,9 +772,10 @@ with tab3:
     if "CL" in df.columns and 'cl_mat' in locals():
         for _, r in cl_mat.iterrows():   pool.append({"type": "Cluster Lead (CL)", "name": r["CL"], "delta": r["delta"]})
     
-    m_df = pd.DataFrame(pool).dropna()
-    leaders = m_df[m_df["delta"] > 0].nlargest(3, "delta")
-    laggards = m_df[m_df["delta"] < 0].nsmallest(3, "delta")
+    # Safely instantiate dataframe explicitly outlining the target schema
+    m_df = pd.DataFrame(pool, columns=["type", "name", "delta"]).dropna()
+    leaders = m_df[m_df["delta"] > 0].nlargest(3, "delta") if not m_df.empty else pd.DataFrame()
+    laggards = m_df[m_df["delta"] < 0].nsmallest(3, "delta") if not m_df.empty else pd.DataFrame()
     
     trend_term = "an operational contraction" if dlt_tot < 0 else "an upward expansion trend"
     hl_color = "var(--red)" if dlt_tot < 0 else "var(--green)"
