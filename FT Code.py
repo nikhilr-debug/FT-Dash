@@ -285,6 +285,8 @@ PLOT_LAYOUT = dict(
 
 BAR_CUR  = "#2f7dd4"
 BAR_PRV  = "#4a4f6a"
+BAR_POS  = "#4a9e2f"
+BAR_NEG  = "#e05252"
 
 # ── Data Fetch Pipelines ──────────────────────────────────────────────────────
 API_URL = "https://redash.vahan.link/api/queries/17613/results.json?api_key=4aFm2iOoyx8I91svQccdeZr0jmaiUsMFSRinZcmu"
@@ -303,8 +305,6 @@ raw = fetch_data()
 if raw.empty: st.stop()
 
 df_base = raw.copy()
-
-# Normalize 'cl' to 'CL' to avoid KeyError from lowercase SQL alias returns
 if "cl" in df_base.columns:
     df_base.rename(columns={"cl": "CL"}, inplace=True)
 
@@ -470,10 +470,12 @@ tab1, tab2, tab3 = st.tabs(["📦 Client Operations", "🗺️ CL & Region Maps"
 # ==============================================================================
 with tab1:
     k1, k2, k3, k4, k5 = st.columns(5)
-    with k1: st.markdown(kpi_html("Current Period FT", fmt(cur_tot)), unsafe_allow_html=True)
+    # Color code absolute numbers inside KPI cards based on Delta
+    k_color = "var(--green)" if dlt_tot > 0 else ("var(--red)" if dlt_tot < 0 else "var(--text)")
+    with k1: st.markdown(kpi_html("Current Period FT", f'<span style="color:{k_color}">{fmt(cur_tot)}</span>'), unsafe_allow_html=True)
     with k2: st.markdown(kpi_html("Previous Period FT", fmt(prv_tot)), unsafe_allow_html=True)
     with k3: st.markdown(kpi_html("Projected Full FT", fmt(proj_tot), sub=f"Run-rate rate: {proj_multiplier:.2f}x"), unsafe_allow_html=True)
-    with k4: st.markdown(kpi_html("Δ Volume Shift", fmt(dlt_tot), pill_html=volume_pill(dlt_tot)), unsafe_allow_html=True)
+    with k4: st.markdown(kpi_html("Δ Volume Shift", f'<span style="color:{k_color}">{fmt(dlt_tot)}</span>', pill_html=volume_pill(dlt_tot)), unsafe_allow_html=True)
     with k5: st.markdown(kpi_html("Δ % Shift", f"{pct_tot:+.1f}%" if pd.notna(pct_tot) else "—", pill_html=pill_markup(pct_tot)), unsafe_allow_html=True)
 
     if mode == "WTD":
@@ -519,16 +521,18 @@ with tab1:
                     val = row.get(week_monday, 0)
                     if idx == 0:
                         wow_str = '<span style="font-size:10px; color:var(--muted);">Base</span>'
+                        val_color = "var(--text)"
                     else:
                         prev_week_monday = active_weeks[idx - 1]
                         prev_val = row.get(prev_week_monday, 0)
                         if prev_val > 0:
                             wow_pct = ((val - prev_val) / prev_val) * 100
-                            color = "var(--green)" if wow_pct >= 0 else "var(--red)"
-                            wow_str = f'<span style="font-size:10px; color:{color}; font-weight:700;">{wow_pct:+.1f}%</span>'
+                            val_color = "var(--green)" if wow_pct > 0 else ("var(--red)" if wow_pct < 0 else "var(--text)")
+                            wow_str = f'<span style="font-size:10px; color:{val_color}; font-weight:700;">{wow_pct:+.1f}%</span>'
                         else:
-                            wow_str = f'<span style="font-size:10px; color:var(--green); font-weight:700;">+100%</span>' if val > 0 else '<span style="font-size:10px; color:var(--muted);">0%</span>'
-                    m_tbl += f'<td class="n" style="width: 9.1%;"><div style="font-weight:600;">{val:,}</div><div>{wow_str}</div></td>'
+                            val_color = "var(--green)" if val > 0 else "var(--text)"
+                            wow_str = f'<span style="font-size:10px; color:{val_color}; font-weight:700;">+100%</span>' if val > 0 else '<span style="font-size:10px; color:var(--muted);">0%</span>'
+                    m_tbl += f'<td class="n" style="width: 9.1%;"><div style="font-weight:600; color:{val_color};">{val:,}</div><div>{wow_str}</div></td>'
                 m_tbl += '</tr>'
             m_tbl += '</tbody></table></div>'
             st.markdown(m_tbl, unsafe_allow_html=True)
@@ -561,9 +565,10 @@ with tab1:
 
     t_html = '<div class="tw"><table class="dash-table"><tbody>'
     for _, r in client_mat.iterrows():
+        c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
         t_html += f"""<tr>
             <td style="width:25%; font-weight:600;">{r['Client']}</td>
-            <td class="n" style="width:16.6%;">{fmt(r['cur'])}</td>
+            <td class="n" style="width:16.6%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
             <td class="n" style="width:16.6%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
             <td class="n" style="width:16.6%; color:var(--muted);">{fmt(r['prv'])}</td>
             <td class="n" style="width:12.5%;">{volume_pill(r['delta'])}</td>
@@ -581,9 +586,10 @@ with tab1:
         
         t_html = '<div class="tw"><table class="dash-table"><tbody>'
         for _, r in growing_clients.iterrows():
+            c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
             t_html += f"""<tr>
                 <td style="width:25%; font-weight:600; color:var(--green);">{r['Client']}</td>
-                <td class="n" style="width:16.6%;">{fmt(r['cur'])}</td>
+                <td class="n" style="width:16.6%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
                 <td class="n" style="width:16.6%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
                 <td class="n" style="width:16.6%; color:var(--muted);">{fmt(r['prv'])}</td>
                 <td class="n" style="width:12.5%;">{volume_pill(r['delta'])}</td>
@@ -607,9 +613,10 @@ with tab1:
             
             t_html = '<div class="tw"><table class="dash-table"><tbody>'
             for _, r in degrow_vl.iterrows():
+                c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
                 t_html += f"""<tr>
                     <td style="width:40%; font-weight:600;">{r['VL']}</td>
-                    <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:20%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
                     <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
                     <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
                 </tr>"""
@@ -627,9 +634,10 @@ with tab1:
             
             t_html = '<div class="tw"><table class="dash-table"><tbody>'
             for _, r in grow_vl.iterrows():
+                c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
                 t_html += f"""<tr>
                     <td style="width:40%; font-weight:600; color:var(--green);">{r['VL']}</td>
-                    <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:20%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
                     <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
                     <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
                 </tr>"""
@@ -653,9 +661,10 @@ with tab2:
         
         t_html = '<div class="tw"><table class="dash-table"><tbody>'
         for _, r in reg_mat.iterrows():
+            c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
             t_html += f"""<tr>
                 <td style="width:30%; font-weight:600;">{r['Region']}</td>
-                <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                <td class="n" style="width:20%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
                 <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
                 <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
                 <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
@@ -673,9 +682,10 @@ with tab2:
             
             t_html = '<div class="tw"><table class="dash-table"><tbody>'
             for _, r in cl_mat.iterrows():
+                c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
                 t_html += f"""<tr>
                     <td style="width:30%; font-weight:600;">{r['CL']}</td>
-                    <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:20%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
                     <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
                     <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
                     <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
@@ -700,9 +710,10 @@ with tab2:
                 
                 t_html = '<div class="tw"><table class="dash-table"><tbody>'
                 for _, r in am_drill_mat.iterrows():
+                    c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
                     t_html += f"""<tr>
                         <td style="width:30%; font-weight:600; color:var(--blue);">{r['AM Name']}</td>
-                        <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                        <td class="n" style="width:20%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
                         <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
                         <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
                         <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
@@ -722,17 +733,16 @@ with tab2:
         
         t_html = '<div class="tw"><table class="dash-table"><tbody>'
         for _, r in gap_reg.iterrows():
+            c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
             t_html += f"""<tr>
                 <td style="width:30%; font-weight:600;">{r['Client']}</td>
                 <td style="width:30%; color:var(--muted);">{r['Region']}</td>
-                <td class="n" style="width:13.3%;">{fmt(r['cur'])}</td>
+                <td class="n" style="width:13.3%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
                 <td class="n" style="width:13.3%; color:var(--red-b); font-weight:600;">{fmt(r['delta'])}</td>
                 <td class="n" style="width:13.3%;">{pill_markup(r['pct'])}</td>
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
-    else:
-        st.info("No matching accounts logged performance shortfall vectors during this window range.")
 
     section("Growing Regions Profile — Ranked by % Surge")
     growing_regions = reg_mat[reg_mat["delta"] > 0]
@@ -742,17 +752,16 @@ with tab2:
         
         t_html = '<div class="tw"><table class="dash-table"><tbody>'
         for _, r in growing_regions.iterrows():
+            c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
             t_html += f"""<tr>
                 <td style="width:30%; font-weight:600; color:var(--green);">{r['Region']}</td>
-                <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                <td class="n" style="width:20%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
                 <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
                 <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
                 <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
-    else:
-        st.info("No regional clusters are displaying expansion metrics currently.")
 
 # ==============================================================================
 # TAB 3: AI NARRATIVE & RCA
