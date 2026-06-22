@@ -55,8 +55,33 @@ html, body, [class*="css"], .stApp {
   line-height: 1.5;
 }
 
+/* Hide only specific Streamlit clutter */
+#MainMenu, footer { display: none !important; }
+[data-testid="stToolbar"] { display: none !important; }
+header { visibility: visible !important; background: transparent !important; }
+[data-testid="collapsedControl"] {
+  background-color: var(--surface2) !important;
+  border: 1px solid var(--br2) !important;
+  border-radius: 8px !important;
+  margin: 15px !important;
+  box-shadow: 0px 4px 10px rgba(0,0,0,0.5) !important;
+  transition: 0.2s ease !important;
+  z-index: 999999 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+[data-testid="collapsedControl"]:hover {
+  background-color: var(--blue-bg) !important;
+  border-color: var(--blue-b) !important;
+}
+[data-testid="collapsedControl"] svg {
+  fill: var(--text) !important;
+  color: var(--text) !important;
+}
+
 .block-container {
-  padding: 1.5rem 2rem 4rem !important;
+  padding: 4.5rem 2rem 4rem !important;
   max-width: 1440px !important;
 }
 div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
@@ -233,7 +258,7 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   letter-spacing: 0.05em !important;
   padding: 6px !important;
   margin: 0 !important;
-  width: 100% !important; /* Force button to fill column */
+  width: 100% !important;
 }
 .stButton > button:hover {
   color: var(--text) !important;
@@ -287,6 +312,7 @@ BAR_PRV  = "#4a4f6a"
 
 # ── Data Fetch Pipelines ──────────────────────────────────────────────────────
 API_URL = "https://redash.vahan.link/api/queries/17613/results.json?api_key=4aFm2iOoyx8I91svQccdeZr0jmaiUsMFSRinZcmu"
+TARGETS_CSV_URL = "https://docs.google.com/spreadsheets/d/1S9XGqCiSHXjXbIrjJ6uoaDBRlTgQel__uaoc8S7zsa0/export?format=csv&gid=0"
 
 @st.cache_data(ttl=3600)
 def fetch_data():
@@ -298,7 +324,21 @@ def fetch_data():
         st.error(f"⚠️ API pipeline disconnection: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=3600)
+def fetch_targets():
+    try:
+        df_t = pd.read_csv(TARGETS_CSV_URL)
+        df_t.columns = df_t.columns.str.strip()
+        if 'Final Tgt' in df_t.columns:
+            df_t['Final Tgt'] = pd.to_numeric(df_t['Final Tgt'].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0)
+        return df_t
+    except Exception as e:
+        st.sidebar.warning("⚠️ Could not load target data from Google Sheets.")
+        return pd.DataFrame()
+
 raw = fetch_data()
+df_tgt = fetch_targets()
+
 if raw.empty: st.stop()
 
 df_base = raw.copy()
@@ -314,7 +354,7 @@ yesterday = today - datetime.timedelta(days=1)
 
 # ── Sidebar Controls ──────────────────────────────────────────────────────────
 st.sidebar.markdown("### 🛠️ Data Controls")
-if st.sidebar.button("🔄 Force Refresh Data", type="primary"):
+if st.sidebar.button("🔄 Force Refresh Data", type="primary", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
@@ -372,11 +412,24 @@ selected_vls = st.sidebar.multiselect("Vendor Line Scope", vl_opts, key="global_
 cl_opts = sorted(list(df_base["CL"].dropna().unique())) if "CL" in df_base.columns else []
 selected_cls = st.sidebar.multiselect("Cluster Lead (CL) Scope", cl_opts, key="global_filter_cl")
 
+# Apply Filters to the Active Working Datasets
 df = df_base.copy()
-if selected_clients: df = df[df["company_name"].isin(selected_clients)]
-if selected_cities:  df = df[df["jobCity"].isin(selected_cities)]
-if selected_vls:     df = df[df["vl_name"].isin(selected_vls)]
-if selected_cls and "CL" in df.columns: df = df[df["CL"].isin(selected_cls)]
+df_tgt_filtered = df_tgt.copy()
+
+if selected_clients: 
+    df = df[df["company_name"].isin(selected_clients)]
+    if not df_tgt_filtered.empty and 'Client' in df_tgt_filtered.columns:
+        df_tgt_filtered = df_tgt_filtered[df_tgt_filtered['Client'].isin(selected_clients)]
+if selected_cities:  
+    df = df[df["jobCity"].isin(selected_cities)]
+if selected_vls:     
+    df = df[df["vl_name"].isin(selected_vls)]
+    if not df_tgt_filtered.empty and 'VL' in df_tgt_filtered.columns:
+        df_tgt_filtered = df_tgt_filtered[df_tgt_filtered['VL'].isin(selected_vls)]
+if selected_cls and "CL" in df.columns: 
+    df = df[df["CL"].isin(selected_cls)]
+    if not df_tgt_filtered.empty and 'CL' in df_tgt_filtered.columns:
+        df_tgt_filtered = df_tgt_filtered[df_tgt_filtered['CL'].isin(selected_cls)]
 
 # ── Header Markup Execution ───────────────────────────────────────────────────
 st.markdown(f"""
@@ -411,7 +464,7 @@ def kpi_html(label, value, sub="", pill_html=""):
       <div class="kpi-sub">{sub} {pill_html}</div>
     </div>"""
 
-def compute_comparison_matrix(dataframe, group_key):
+def compute_comparison_matrix(dataframe, group_key, tgt_col=None):
     c = dataframe[(dataframe[ft] >= cs) & (dataframe[ft] <= ce)].groupby(group_key).size().rename("cur")
     p = dataframe[(dataframe[ft] >= ps) & (dataframe[ft] <= pe)].groupby(group_key).size().rename("prv")
     res = pd.concat([c, p], axis=1)
@@ -423,6 +476,20 @@ def compute_comparison_matrix(dataframe, group_key):
     res["delta"] = res["cur"] - res["prv"]
     res["pct"] = np.where(res["prv"] > 0, (res["delta"] / res["prv"]) * 100, np.nan)
     res["proj"] = (res["cur"] * proj_multiplier).round().astype(int)
+    
+    # Safely inject targets based on dimension
+    if tgt_col is not None and not df_tgt_filtered.empty:
+        try:
+            tgt_agg = df_tgt_filtered.groupby(tgt_col)['Final Tgt'].sum().rename("target")
+            if isinstance(group_key, list):
+                tgt_agg.index.names = group_key 
+            res = res.join(tgt_agg)
+        except Exception:
+            res["target"] = 0
+    else:
+        res["target"] = 0
+
+    res["target"] = res["target"].fillna(0).astype(int)
     return res
 
 def draw_sortable_header(table_id, col_specs):
@@ -435,7 +502,7 @@ def draw_sortable_header(table_id, col_specs):
     
     for idx, (label, field, weight) in enumerate(col_specs):
         icon = " ▴" if current_col == field and not current_desc else (" ▾" if current_col == field else "")
-        if grid_cols[idx].button(f"{label}{icon}", key=f"btn_{table_id}_{str(field)}"):
+        if grid_cols[idx].button(f"{label}{icon}", key=f"btn_{table_id}_{str(field)}", use_container_width=True):
             if current_col == field:
                 st.session_state[state_key] = (field, not current_desc)
             else:
@@ -452,12 +519,16 @@ prv_tot = len(df[(df[ft] >= ps) & (df[ft] <= pe)])
 dlt_tot = cur_tot - prv_tot
 pct_tot = (dlt_tot / prv_tot * 100) if prv_tot > 0 else np.nan
 proj_tot = int(round(cur_tot * proj_multiplier))
+global_target = int(df_tgt_filtered['Final Tgt'].sum()) if not df_tgt_filtered.empty and 'Final Tgt' in df_tgt_filtered.columns else 0
 
-client_mat = compute_comparison_matrix(df, "company_name").reset_index()
-client_mat.columns = ["Client", "cur", "prv", "delta", "pct", "proj"]
+client_mat = compute_comparison_matrix(df, "company_name", tgt_col="Client").reset_index()
+client_mat.columns = ["Client", "cur", "prv", "delta", "pct", "proj", "target"]
 
-vl_master = compute_comparison_matrix(df, "vl_name").reset_index()
-vl_master.columns = ["VL", "cur", "prv", "delta", "pct", "proj"]
+vl_master = compute_comparison_matrix(df, "vl_name", tgt_col="VL").reset_index()
+vl_master.columns = ["VL", "cur", "prv", "delta", "pct", "proj", "target"]
+
+vl_client_mat = compute_comparison_matrix(df, ["vl_name", "company_name"], tgt_col=["VL", "Client"]).reset_index()
+vl_client_mat.columns = ["VL", "Client", "cur", "prv", "delta", "pct", "proj", "target"]
 
 # ── Tab Navigation Panels ─────────────────────────────────────────────────────
 tab1, tab2, tab3 = st.tabs(["📦 Client Operations", "🗺️ CL & Region Maps", "🤖 AI Narrative & RCA"])
@@ -466,13 +537,14 @@ tab1, tab2, tab3 = st.tabs(["📦 Client Operations", "🗺️ CL & Region Maps"
 # TAB 1: CLIENT OPERATIONS
 # ==============================================================================
 with tab1:
-    k1, k2, k3, k4, k5 = st.columns(5)
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
     k_color = "var(--green)" if dlt_tot > 0 else ("var(--red)" if dlt_tot < 0 else "var(--text)")
-    with k1: st.markdown(kpi_html("Current Period FT", f'<span style="color:{k_color}">{fmt(cur_tot)}</span>'), unsafe_allow_html=True)
-    with k2: st.markdown(kpi_html("Previous Period FT", fmt(prv_tot)), unsafe_allow_html=True)
-    with k3: st.markdown(kpi_html("Projected Full FT", fmt(proj_tot), sub=f"Run-rate rate: {proj_multiplier:.2f}x"), unsafe_allow_html=True)
-    with k4: st.markdown(kpi_html("Δ Volume Shift", f'<span style="color:{k_color}">{fmt(dlt_tot)}</span>', pill_html=volume_pill(dlt_tot)), unsafe_allow_html=True)
-    with k5: st.markdown(kpi_html("Δ % Shift", f"{pct_tot:+.1f}%" if pd.notna(pct_tot) else "—", pill_html=pill_markup(pct_tot)), unsafe_allow_html=True)
+    with k1: st.markdown(kpi_html("Current FT", f'<span style="color:{k_color}">{fmt(cur_tot)}</span>'), unsafe_allow_html=True)
+    with k2: st.markdown(kpi_html("Previous FT", fmt(prv_tot)), unsafe_allow_html=True)
+    with k3: st.markdown(kpi_html("Target FT", fmt(global_target)), unsafe_allow_html=True)
+    with k4: st.markdown(kpi_html("Projected FT", fmt(proj_tot), sub=f"Run-rate: {proj_multiplier:.2f}x"), unsafe_allow_html=True)
+    with k5: st.markdown(kpi_html("Δ Volume", f'<span style="color:{k_color}">{fmt(dlt_tot)}</span>', pill_html=volume_pill(dlt_tot)), unsafe_allow_html=True)
+    with k6: st.markdown(kpi_html("Δ % Shift", f"{pct_tot:+.1f}%" if pd.notna(pct_tot) else "—", pill_html=pill_markup(pct_tot)), unsafe_allow_html=True)
 
     if mode == "WTD":
         df_trend = df.copy()
@@ -555,7 +627,7 @@ with tab1:
         st.plotly_chart(fig_mtd, use_container_width=True, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
     section("All Clients Performance Analysis")
-    c_col, c_desc = draw_sortable_header("client_main", [("Client Name", "Client", 3), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Previous FT", "prv", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
+    c_col, c_desc = draw_sortable_header("client_main", [("Client Name", "Client", 2.5), ("Cur FT", "cur", 1.25), ("Target", "target", 1.25), ("Proj FT", "proj", 1.25), ("Prv FT", "prv", 1.25), ("Δ Vol", "delta", 1.25), ("Δ %", "pct", 1.25)])
     client_mat = client_mat.sort_values(c_col, ascending=not c_desc)
 
     t_html = '<div class="tw"><table class="dash-table"><tbody>'
@@ -563,55 +635,55 @@ with tab1:
         c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
         t_html += f"""<tr>
             <td style="width:25%; font-weight:600;">{r['Client']}</td>
-            <td class="n" style="width:16.6%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-            <td class="n" style="width:16.6%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-            <td class="n" style="width:16.6%; color:var(--muted);">{fmt(r['prv'])}</td>
+            <td class="n" style="width:12.5%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+            <td class="n" style="width:12.5%; font-weight:600; color:var(--muted);">{fmt(r['target'])}</td>
+            <td class="n" style="width:12.5%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+            <td class="n" style="width:12.5%; color:var(--muted);">{fmt(r['prv'])}</td>
             <td class="n" style="width:12.5%;">{volume_pill(r['delta'])}</td>
             <td class="n" style="width:12.5%;">{pill_markup(r['pct'])}</td>
         </tr>"""
     t_html += "</tbody></table></div>"
     st.markdown(t_html, unsafe_allow_html=True)
 
-    section("Growing Clients Matrix — Ranked by % Surge")
-    growing_clients = client_mat[client_mat["delta"] > 0]
-    if not growing_clients.empty:
-        gc_col, gc_desc = draw_sortable_header("growing_clients", [("Client Name", "Client", 3), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Previous FT", "prv", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
-        growing_clients = growing_clients.sort_values(gc_col, ascending=not gc_desc)
-        
-        t_html = '<div class="tw"><table class="dash-table"><tbody>'
-        for _, r in growing_clients.iterrows():
-            c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
-            t_html += f"""<tr>
-                <td style="width:25%; font-weight:600; color:var(--green);">{r['Client']}</td>
-                <td class="n" style="width:16.6%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                <td class="n" style="width:16.6%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                <td class="n" style="width:16.6%; color:var(--muted);">{fmt(r['prv'])}</td>
-                <td class="n" style="width:12.5%;">{volume_pill(r['delta'])}</td>
-                <td class="n" style="width:12.5%;">{pill_markup(r['pct'])}</td>
-            </tr>"""
-        t_html += "</tbody></table></div>"
-        st.markdown(t_html, unsafe_allow_html=True)
-    else:
-        st.info("No segments meet expansion target profile bounds currently.")
+    section("All Vendor Lines (VL) Performance Analysis")
+    vl_col, vl_desc = draw_sortable_header("vl_main_all", [("Vendor Line Partner (VL)", "VL", 2.5), ("Cur FT", "cur", 1.25), ("Target", "target", 1.25), ("Proj FT", "proj", 1.25), ("Prv FT", "prv", 1.25), ("Δ Vol", "delta", 1.25), ("Δ %", "pct", 1.25)])
+    vl_master_sorted = vl_master.sort_values(vl_col, ascending=not vl_desc)
 
-    section("Dynamic Vendor Line (VL) Analytics Tracker")
+    t_html = '<div class="tw"><table class="dash-table"><tbody>'
+    for _, r in vl_master_sorted.iterrows():
+        c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
+        t_html += f"""<tr>
+            <td style="width:25%; font-weight:600;">{r['VL']}</td>
+            <td class="n" style="width:12.5%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+            <td class="n" style="width:12.5%; font-weight:600; color:var(--muted);">{fmt(r['target'])}</td>
+            <td class="n" style="width:12.5%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+            <td class="n" style="width:12.5%; color:var(--muted);">{fmt(r['prv'])}</td>
+            <td class="n" style="width:12.5%;">{volume_pill(r['delta'])}</td>
+            <td class="n" style="width:12.5%;">{pill_markup(r['pct'])}</td>
+        </tr>"""
+    t_html += "</tbody></table></div>"
+    st.markdown(t_html, unsafe_allow_html=True)
+
+    section("Dynamic Vendor Line (VL) Analytics Tracker (By Client)")
     vl_left, vl_right = st.columns(2)
     
     with vl_left:
         section("Top 10 Degrowing Vendor Lines (VL)")
-        degrow_vl = vl_master[vl_master["delta"] < 0].nsmallest(10, "delta")
+        degrow_vl = vl_client_mat[vl_client_mat["delta"] < 0].nsmallest(10, "delta")
         if not degrow_vl.empty:
-            dv_col, dv_desc = draw_sortable_header("degrow_vl_table", [("Vendor Partner Line (VL)", "VL", 4), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Δ Deficit", "delta", 2)])
+            dv_col, dv_desc = draw_sortable_header("degrow_vl_table", [("VL Partner", "VL", 2), ("Client", "Client", 2), ("Cur FT", "cur", 1.5), ("Target", "target", 1.5), ("Proj FT", "proj", 1.5), ("Δ Deficit", "delta", 1.5)])
             degrow_vl = degrow_vl.sort_values(dv_col, ascending=not dv_desc)
             
             t_html = '<div class="tw"><table class="dash-table"><tbody>'
             for _, r in degrow_vl.iterrows():
                 c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
                 t_html += f"""<tr>
-                    <td style="width:40%; font-weight:600;">{r['VL']}</td>
-                    <td class="n" style="width:20%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                    <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                    <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
+                    <td style="width:20%; font-weight:600;">{r['VL']}</td>
+                    <td style="width:20%; color:var(--muted);">{r['Client']}</td>
+                    <td class="n" style="width:15%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:15%; font-weight:600; color:var(--muted);">{fmt(r['target'])}</td>
+                    <td class="n" style="width:15%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                    <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
                 </tr>"""
             t_html += "</tbody></table></div>"
             st.markdown(t_html, unsafe_allow_html=True)
@@ -620,19 +692,21 @@ with tab1:
 
     with vl_right:
         section("Top 10 Growing Vendor Lines (VL)")
-        grow_vl = vl_master[vl_master["delta"] > 0].nlargest(10, "delta")
+        grow_vl = vl_client_mat[vl_client_mat["delta"] > 0].nlargest(10, "delta")
         if not grow_vl.empty:
-            gv_col, gv_desc = draw_sortable_header("grow_vl_table", [("Vendor Partner Line (VL)", "VL", 4), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Δ Surge", "delta", 2)])
+            gv_col, gv_desc = draw_sortable_header("grow_vl_table", [("VL Partner", "VL", 2), ("Client", "Client", 2), ("Cur FT", "cur", 1.5), ("Target", "target", 1.5), ("Proj FT", "proj", 1.5), ("Δ Surge", "delta", 1.5)])
             grow_vl = grow_vl.sort_values(gv_col, ascending=not gv_desc)
             
             t_html = '<div class="tw"><table class="dash-table"><tbody>'
             for _, r in grow_vl.iterrows():
                 c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
                 t_html += f"""<tr>
-                    <td style="width:40%; font-weight:600; color:var(--green);">{r['VL']}</td>
-                    <td class="n" style="width:20%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                    <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                    <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
+                    <td style="width:20%; font-weight:600; color:var(--green);">{r['VL']}</td>
+                    <td style="width:20%; color:var(--muted);">{r['Client']}</td>
+                    <td class="n" style="width:15%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:15%; font-weight:600; color:var(--muted);">{fmt(r['target'])}</td>
+                    <td class="n" style="width:15%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                    <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
                 </tr>"""
             t_html += "</tbody></table></div>"
             st.markdown(t_html, unsafe_allow_html=True)
@@ -643,22 +717,23 @@ with tab1:
 # TAB 2: CL & REGION MAPS
 # ==============================================================================
 with tab2:
-    reg_mat = compute_comparison_matrix(df, "region").reset_index()
-    reg_mat.columns = ["Region", "cur", "prv", "delta", "pct", "proj"]
+    reg_mat = compute_comparison_matrix(df, "region", tgt_col="Region").reset_index()
+    reg_mat.columns = ["Region", "cur", "prv", "delta", "pct", "proj", "target"]
 
     r_left, r_right = st.columns(2)
     with r_left:
         section("Regional Zone Allocations Table")
-        rl_col, rl_desc = draw_sortable_header("reg_main", [("Region Layer", "Region", 3), ("Current", "cur", 2), ("Projected", "proj", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
+        rl_col, rl_desc = draw_sortable_header("reg_main", [("Region Layer", "Region", 2.5), ("Cur FT", "cur", 1.5), ("Target", "target", 1.5), ("Proj", "proj", 1.5), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
         reg_mat = reg_mat.sort_values(rl_col, ascending=not rl_desc)
         
         t_html = '<div class="tw"><table class="dash-table"><tbody>'
         for _, r in reg_mat.iterrows():
             c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
             t_html += f"""<tr>
-                <td style="width:30%; font-weight:600;">{r['Region']}</td>
-                <td class="n" style="width:20%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                <td style="width:25%; font-weight:600;">{r['Region']}</td>
+                <td class="n" style="width:15%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                <td class="n" style="width:15%; font-weight:600; color:var(--muted);">{fmt(r['target'])}</td>
+                <td class="n" style="width:15%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
                 <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
                 <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
             </tr>"""
@@ -668,18 +743,19 @@ with tab2:
     with r_right:
         section("Cluster Lead (CL) Allocations Table")
         if "CL" in df.columns:
-            cl_mat = compute_comparison_matrix(df, "CL").reset_index()
-            cl_mat.columns = ["CL", "cur", "prv", "delta", "pct", "proj"]
-            cl_col, cl_desc = draw_sortable_header("cl_main_table", [("Cluster Lead", "CL", 3), ("Current", "cur", 2), ("Projected", "proj", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
+            cl_mat = compute_comparison_matrix(df, "CL", tgt_col="CL").reset_index()
+            cl_mat.columns = ["CL", "cur", "prv", "delta", "pct", "proj", "target"]
+            cl_col, cl_desc = draw_sortable_header("cl_main_table", [("Cluster Lead", "CL", 2.5), ("Cur FT", "cur", 1.5), ("Target", "target", 1.5), ("Proj", "proj", 1.5), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
             cl_mat = cl_mat.sort_values(cl_col, ascending=not cl_desc)
             
             t_html = '<div class="tw"><table class="dash-table"><tbody>'
             for _, r in cl_mat.iterrows():
                 c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
                 t_html += f"""<tr>
-                    <td style="width:30%; font-weight:600;">{r['CL']}</td>
-                    <td class="n" style="width:20%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                    <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                    <td style="width:25%; font-weight:600;">{r['CL']}</td>
+                    <td class="n" style="width:15%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:15%; font-weight:600; color:var(--muted);">{fmt(r['target'])}</td>
+                    <td class="n" style="width:15%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
                     <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
                     <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
                 </tr>"""
@@ -692,69 +768,28 @@ with tab2:
         section("Interactive Drill-Down: Account Managers under Selected Cluster Lead")
         cl_list = sorted(list(df["CL"].dropna().unique()))
         if cl_list:
-            sel_drill_cl = st.selectbox("Select Cluster Lead for AM Drilldown", cl_list, key="cl_drill_selectbox")
-            if sel_drill_cl:
-                df_cl_drill = df[df["CL"] == sel_drill_cl]
-                am_drill_mat = compute_comparison_matrix(df_cl_drill, "am_name").reset_index()
-                am_drill_mat.columns = ["AM Name", "cur", "prv", "delta", "pct", "proj"]
-                
-                amd_col, amd_desc = draw_sortable_header("am_drill_table", [("Account Manager Name", "AM Name", 3), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
-                am_drill_mat = am_drill_mat.sort_values(amd_col, ascending=not amd_desc)
-                
-                t_html = '<div class="tw"><table class="dash-table"><tbody>'
-                for _, r in am_drill_mat.iterrows():
-                    c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
-                    t_html += f"""<tr>
-                        <td style="width:30%; font-weight:600; color:var(--blue);">{r['AM Name']}</td>
-                        <td class="n" style="width:20%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                        <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                        <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
-                        <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
-                    </tr>"""
-                t_html += "</tbody></table></div>"
-                st.markdown(t_html, unsafe_allow_html=True)
-
-    section("Region Breakdown for Gap Clients (Shortfall Contributors Only)")
-    gap_clients = client_mat[client_mat["delta"] < 0]["Client"].unique()
-    if len(gap_clients) > 0:
-        df_gap = df[df["company_name"].isin(gap_clients)]
-        gap_reg = compute_comparison_matrix(df_gap, ["company_name", "region"]).reset_index()
-        gap_reg.columns = ["Client", "Region", "cur", "prv", "delta", "pct", "proj"]
-        
-        gr_col, gr_desc = draw_sortable_header("gap_reg_table", [("Client Name", "Client", 3), ("Regional Cluster", "Region", 3), ("Current FT", "cur", 2), ("Δ Volume Drop", "delta", 2), ("Δ %", "pct", 2)])
-        gap_reg = gap_reg.sort_values(gr_col, ascending=not gr_desc)
-        
-        t_html = '<div class="tw"><table class="dash-table"><tbody>'
-        for _, r in gap_reg.iterrows():
-            c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
-            t_html += f"""<tr>
-                <td style="width:30%; font-weight:600;">{r['Client']}</td>
-                <td style="width:30%; color:var(--muted);">{r['Region']}</td>
-                <td class="n" style="width:13.3%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                <td class="n" style="width:13.3%; color:var(--red-b); font-weight:600;">{fmt(r['delta'])}</td>
-                <td class="n" style="width:13.3%;">{pill_markup(r['pct'])}</td>
-            </tr>"""
-        t_html += "</tbody></table></div>"
-        st.markdown(t_html, unsafe_allow_html=True)
-
-    section("Growing Regions Profile — Ranked by % Surge")
-    growing_regions = reg_mat[reg_mat["delta"] > 0]
-    if not growing_regions.empty:
-        grg_col, grg_desc = draw_sortable_header("growing_regions_tbl", [("Region Zone", "Region", 3), ("Current", "cur", 2), ("Projected", "proj", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
-        growing_regions = growing_regions.sort_values(grg_col, ascending=not grg_desc)
-        
-        t_html = '<div class="tw"><table class="dash-table"><tbody>'
-        for _, r in growing_regions.iterrows():
-            c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
-            t_html += f"""<tr>
-                <td style="width:30%; font-weight:600; color:var(--green);">{r['Region']}</td>
-                <td class="n" style="width:20%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
-                <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
-            </tr>"""
-        t_html += "</tbody></table></div>"
-        st.markdown(t_html, unsafe_allow_html=True)
+            sel_drill_cl = st.multiselect("Select Cluster Lead(s) for AM Drilldown (Empty = All)", cl_list, default=[], key="cl_drill_selectbox")
+            
+            df_cl_drill = df[df["CL"].isin(sel_drill_cl)] if sel_drill_cl else df
+            am_drill_mat = compute_comparison_matrix(df_cl_drill, "am_name", tgt_col="CM").reset_index()
+            am_drill_mat.columns = ["AM Name", "cur", "prv", "delta", "pct", "proj", "target"]
+            
+            amd_col, amd_desc = draw_sortable_header("am_drill_table", [("Account Manager Name", "AM Name", 2.5), ("Cur FT", "cur", 1.5), ("Target", "target", 1.5), ("Proj FT", "proj", 1.5), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
+            am_drill_mat = am_drill_mat.sort_values(amd_col, ascending=not amd_desc)
+            
+            t_html = '<div class="tw"><table class="dash-table"><tbody>'
+            for _, r in am_drill_mat.iterrows():
+                c_color = "var(--green)" if r['delta'] > 0 else ("var(--red)" if r['delta'] < 0 else "var(--text)")
+                t_html += f"""<tr>
+                    <td style="width:25%; font-weight:600; color:var(--blue);">{r['AM Name']}</td>
+                    <td class="n" style="width:15%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:15%; font-weight:600; color:var(--muted);">{fmt(r['target'])}</td>
+                    <td class="n" style="width:15%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                    <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
+                    <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
+                </tr>"""
+            t_html += "</tbody></table></div>"
+            st.markdown(t_html, unsafe_allow_html=True)
 
 # ==============================================================================
 # TAB 3: AI NARRATIVE & RCA
