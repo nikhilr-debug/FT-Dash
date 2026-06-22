@@ -55,37 +55,8 @@ html, body, [class*="css"], .stApp {
   line-height: 1.5;
 }
 
-/* Ensure header is active so sidebar toggle works, but make it transparent */
-header { 
-  visibility: visible !important; 
-  background: transparent !important; 
-}
-/* Hide the Streamlit right-side menu and deploy buttons */
-[data-testid="stToolbar"], footer, #MainMenu { 
-  display: none !important; 
-}
-
-/* Force the Sidebar Toggle Arrow to become a highly visible floating button */
-[data-testid="collapsedControl"] {
-  background-color: var(--surface2) !important;
-  border: 1px solid var(--br2) !important;
-  border-radius: 8px !important;
-  margin: 15px !important;
-  box-shadow: 0px 4px 10px rgba(0,0,0,0.5) !important;
-  transition: 0.2s ease !important;
-  z-index: 999999 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-}
-[data-testid="collapsedControl"]:hover {
-  background-color: var(--blue-bg) !important;
-  border-color: var(--blue-b) !important;
-}
-[data-testid="collapsedControl"] svg {
-  fill: var(--text) !important;
-  color: var(--text) !important;
-}
+/* Hide only specific Streamlit clutter (Deploy button & footer) to keep sidebar toggle intact */
+#MainMenu, footer { visibility: hidden !important; }
 
 .block-container {
   padding: 1.5rem 2rem 4rem !important;
@@ -345,7 +316,7 @@ yesterday = today - datetime.timedelta(days=1)
 
 # ── Sidebar Controls ──────────────────────────────────────────────────────────
 st.sidebar.markdown("### 🛠️ Data Controls")
-if st.sidebar.button("🔄 Force Refresh Data", type="primary", use_container_width=True):
+if st.sidebar.button("🔄 Force Refresh Data", type="primary", width="stretch"):
     st.cache_data.clear()
     st.rerun()
 
