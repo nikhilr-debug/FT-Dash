@@ -55,30 +55,15 @@ html, body, [class*="css"], .stApp {
   line-height: 1.5;
 }
 
-#MainMenu, footer { display: none !important; }
-[data-testid="stToolbar"] { display: none !important; }
-header { background: transparent !important; }
-[data-testid="collapsedControl"] {
-  background-color: var(--surface2) !important;
-  border: 1px solid var(--br2) !important;
-  border-radius: 8px !important;
-  margin: 15px !important;
-  box-shadow: 0px 4px 10px rgba(0,0,0,0.5) !important;
-  transition: 0.2s ease !important;
-  z-index: 999999 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-}
-[data-testid="collapsedControl"]:hover {
-  background-color: var(--blue-bg) !important;
-  border-color: var(--blue-b) !important;
-}
+/* ALL HEADER-HIDING CSS HAS BEEN REMOVED TO ENSURE SIDEBAR TOGGLE WORKS FLAWLESSLY */
 
 .block-container {
-  padding: 4.5rem 2rem 4rem !important;
+  padding: 2.5rem 2rem 4rem !important;
   max-width: 1440px !important;
 }
+
+/* Neutralize Streamlit column gaps to perfectly align headers with HTML tables */
+div[data-testid="stHorizontalBlock"] { gap: 0 !important; }
 div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
 
 /* Dashboard Structural Elements */
@@ -217,7 +202,7 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   letter-spacing: 0.05em !important;
   padding: 6px !important;
   margin: 0 !important;
-  width: 100% !important;
+  width: 100% !important; /* Force width purely via CSS */
 }
 .stButton > button:hover {
   color: var(--text) !important;
@@ -280,20 +265,32 @@ def fetch_data():
 def fetch_targets():
     try:
         df_tgt = pd.read_csv(TARGETS_URL)
-        df_tgt.columns = df_tgt.columns.astype(str).str.strip().str.lower()
         
-        col_map = {
-            'cm': 'am_name', 'am': 'am_name',
-            'client': 'company_name', 'company': 'company_name',
-            'vl': 'vl_name', 'vendor line': 'vl_name',
-            'cl': 'CL', 'cluster lead': 'CL',
-            'region': 'region'
-        }
-        df_tgt = df_tgt.rename(columns=col_map)
+        # Highly robust fuzzy matching to catch any Google Sheet headers
+        new_cols = []
+        tgt_found = False
+        for c in df_tgt.columns:
+            cl = str(c).strip().lower()
+            if ('client' in cl or 'company' in cl) and 'company_name' not in new_cols: 
+                new_cols.append('company_name')
+            elif ('vl' == cl or 'vendor' in cl) and 'vl_name' not in new_cols: 
+                new_cols.append('vl_name')
+            elif ('cl' == cl or 'cluster lead' in cl) and 'CL' not in new_cols: 
+                new_cols.append('CL')
+            elif ('am' == cl or 'cm' == cl or 'manager' in cl) and 'am_name' not in new_cols: 
+                new_cols.append('am_name')
+            elif 'region' in cl and 'region' not in new_cols: 
+                new_cols.append('region')
+            elif ('tgt' in cl or 'target' in cl) and not tgt_found:
+                new_cols.append('target')
+                tgt_found = True
+            else:
+                new_cols.append(cl)
+                
+        df_tgt.columns = new_cols
         
-        target_cols = [c for c in df_tgt.columns if 'target' in c or 'tgt' in c]
-        if target_cols:
-            df_tgt['target'] = pd.to_numeric(df_tgt[target_cols[0]].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce').fillna(0)
+        if 'target' in df_tgt.columns:
+            df_tgt['target'] = pd.to_numeric(df_tgt['target'].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce').fillna(0)
         else:
             df_tgt['target'] = 0
             
@@ -357,6 +354,7 @@ def get_windows(mode, exclude_current):
 
 cs, ce, ps, pe = get_windows(mode, exclude_current)
 
+# ── Run-Rate Projection Multiplier Engine ─────────────────────────────────────
 days_elapsed = (ce - cs).days + 1
 if mode == "WTD":
     total_days = 7
@@ -453,8 +451,8 @@ def compute_comparison_matrix(dataframe, group_key, target_df=None):
         if keys_to_merge:
             t_df_temp = target_df.copy()
             for k in keys_to_merge:
-                res[f"{k}_join"] = res[k].astype(str).str.strip().str.lower()
-                t_df_temp[f"{k}_join"] = t_df_temp[k].astype(str).str.strip().str.lower()
+                res[f"{k}_join"] = res[k].fillna("").astype(str).str.strip().str.lower()
+                t_df_temp[f"{k}_join"] = t_df_temp[k].fillna("").astype(str).str.strip().str.lower()
             
             join_cols = [f"{k}_join" for k in keys_to_merge]
             t_agg = t_df_temp.groupby(join_cols)['target'].sum().reset_index()
@@ -479,11 +477,11 @@ def draw_sortable_header(table_id, col_specs):
 
     current_col, current_desc = st.session_state[state_key]
     
-    # Calculate fractional columns using explicit weights
     grid_cols = st.columns([spec[2] for spec in col_specs])
     
     for idx, (label, field, weight) in enumerate(col_specs):
         icon = " ▴" if current_col == field and not current_desc else (" ▾" if current_col == field else "")
+        # Removed deprecated use_container_width entirely
         if grid_cols[idx].button(f"{label}{icon}", key=f"btn_{table_id}_{str(field)}"):
             if current_col == field:
                 st.session_state[state_key] = (field, not current_desc)
@@ -557,14 +555,14 @@ with tab1:
                 marker=dict(size=8, color=BAR_CUR)
             ))
             fig_trend.update_layout(**PLOT_LAYOUT, height=220)
-            st.plotly_chart(fig_trend, config={"displayModeBar": False}, key="8_week_trend_line_chart")
+            st.plotly_chart(fig_trend, use_container_width=True, config={"displayModeBar": False}, key="8_week_trend_line_chart")
             
             section("Client × Week Matrix View (FT Volume & WoW Changes)")
             matrix_src = df_trend.groupby(['company_name', 'Week_Start']).size().unstack(fill_value=0)
             
             week_w = 80 / len(active_weeks) if active_weeks else 80
             col_specs_week = [("Client Profile", "company_name", 20)] + [(f"W/C {w.strftime('%d %b')}", w, week_w) for w in active_weeks]
-            w_col, w_desc = draw_sortable_header("client_week_matrix_v5", col_specs_week)
+            w_col, w_desc = draw_sortable_header("client_week_matrix_v6", col_specs_week)
             
             if w_col == "company_name" or w_col not in matrix_src.columns: matrix_src = matrix_src.sort_index(ascending=not w_desc)
             else: matrix_src = matrix_src.sort_values(by=w_col, ascending=not w_desc)
@@ -611,10 +609,10 @@ with tab1:
         mtd_layout["height"] = 240
         mtd_layout["showlegend"] = True
         fig_mtd.update_layout(**mtd_layout)
-        st.plotly_chart(fig_mtd, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
+        st.plotly_chart(fig_mtd, use_container_width=True, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
     section("All Clients Performance Analysis")
-    c_col, c_desc = draw_sortable_header("client_main_v5", [
+    c_col, c_desc = draw_sortable_header("client_main_v6", [
         ("Client Name", "company_name", 25), 
         ("Cur FT", "cur", 12.5), ("Proj FT", "proj", 12.5), 
         ("Target", "target", 12.5), ("Gap", "gap", 12.5), 
@@ -642,7 +640,7 @@ with tab1:
     section("Growing Clients Matrix — Ranked by % Surge")
     growing_clients = client_mat[client_mat["delta"] > 0]
     if not growing_clients.empty:
-        gc_col, gc_desc = draw_sortable_header("growing_clients_v5", [
+        gc_col, gc_desc = draw_sortable_header("growing_clients_v6", [
             ("Client Name", "company_name", 25), 
             ("Cur FT", "cur", 12.5), ("Proj FT", "proj", 12.5), 
             ("Target", "target", 12.5), ("Gap", "gap", 12.5), 
@@ -677,8 +675,7 @@ with tab1:
         section("Top 10 Degrowing VLs (By Client)")
         degrow_vbc = vl_by_client_mat[vl_by_client_mat["delta"] < 0].nsmallest(10, "delta")
         if not degrow_vbc.empty:
-            # Layout weights sum to 100: 20 + 20 + (12 * 5) = 100
-            dv_col, dv_desc = draw_sortable_header("degrow_vbc_table", [
+            dv_col, dv_desc = draw_sortable_header("degrow_vbc_table_v6", [
                 ("VL", "vl_name", 20), ("Client", "company_name", 20),
                 ("Cur", "cur", 12), ("Proj", "proj", 12),
                 ("Tgt", "target", 12), ("Gap", "gap", 12), ("Δ Vol", "delta", 12)
@@ -710,7 +707,7 @@ with tab1:
         section("Top 10 Growing VLs (By Client)")
         grow_vbc = vl_by_client_mat[vl_by_client_mat["delta"] > 0].nlargest(10, "delta")
         if not grow_vbc.empty:
-            gv_col, gv_desc = draw_sortable_header("grow_vbc_table", [
+            gv_col, gv_desc = draw_sortable_header("grow_vbc_table_v6", [
                 ("VL", "vl_name", 20), ("Client", "company_name", 20),
                 ("Cur", "cur", 12), ("Proj", "proj", 12),
                 ("Tgt", "target", 12), ("Gap", "gap", 12), ("Δ Vol", "delta", 12)
@@ -739,7 +736,7 @@ with tab1:
             st.info("No vendor lines currently displaying expansion trends.")
 
     section("Dynamic Vendor Line (VL) Analytics Tracker (By Client)")
-    vbc_col, vbc_desc = draw_sortable_header("vl_by_client_table_v5", [
+    vbc_col, vbc_desc = draw_sortable_header("vl_by_client_table_v6", [
         ("Vendor Line (VL)", "vl_name", 25), ("Client", "company_name", 25), 
         ("Cur FT", "cur", 10), ("Proj FT", "proj", 10), 
         ("Target", "target", 10), ("Gap", "gap", 10), 
@@ -765,7 +762,7 @@ with tab1:
     st.markdown(t_html, unsafe_allow_html=True)
 
     section("All Vendor Lines (VL) Performance Analysis")
-    av_col, av_desc = draw_sortable_header("vl_main_table_v5", [
+    av_col, av_desc = draw_sortable_header("vl_main_table_v6", [
         ("Vendor Line", "vl_name", 25), 
         ("Cur FT", "cur", 12.5), ("Proj FT", "proj", 12.5), 
         ("Target", "target", 12.5), ("Gap", "gap", 12.5), 
@@ -799,7 +796,7 @@ with tab2:
     r_left, r_right = st.columns(2)
     with r_left:
         section("Regional Zone Allocations Table")
-        rl_col, rl_desc = draw_sortable_header("reg_main_v5", [
+        rl_col, rl_desc = draw_sortable_header("reg_main_v6", [
             ("Region", "region", 25), ("Cur FT", "cur", 12.5), 
             ("Proj FT", "proj", 12.5), ("Target", "target", 12.5), 
             ("Gap", "gap", 12.5), ("Δ Vol", "delta", 12.5), ("Δ %", "pct", 12.5)
@@ -827,7 +824,7 @@ with tab2:
         section("Cluster Lead (CL) Allocations Table")
         if "CL" in df.columns:
             cl_mat = compute_comparison_matrix(df, "CL", t_df)
-            cl_col, cl_desc = draw_sortable_header("cl_main_table_v5", [
+            cl_col, cl_desc = draw_sortable_header("cl_main_table_v6", [
                 ("Cluster Lead", "CL", 25), ("Cur FT", "cur", 12.5), 
                 ("Proj FT", "proj", 12.5), ("Target", "target", 12.5), 
                 ("Gap", "gap", 12.5), ("Δ Vol", "delta", 12.5), ("Δ %", "pct", 12.5)
@@ -863,7 +860,7 @@ with tab2:
             df_cl_drill = df[df["CL"].isin(sel_drill_cl)]
             am_drill_mat = compute_comparison_matrix(df_cl_drill, "am_name", t_df)
             
-            amd_col, amd_desc = draw_sortable_header("am_drill_table_v5", [
+            amd_col, amd_desc = draw_sortable_header("am_drill_table_v6", [
                 ("Account Manager", "am_name", 25), ("Cur FT", "cur", 15), 
                 ("Proj FT", "proj", 15), ("Target", "target", 15), 
                 ("Gap", "gap", 15), ("Δ Vol", "delta", 15)
