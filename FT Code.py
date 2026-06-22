@@ -205,6 +205,7 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
 .td-bold { font-weight: 600; }
 .td-muted { color: var(--muted); font-size: 11px; }
 
+/* Force fully stretched buttons using CSS to bypass Streamlit version warnings */
 .stButton > button {
   background-color: var(--surface2) !important;
   color: var(--muted) !important;
@@ -216,7 +217,7 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   letter-spacing: 0.05em !important;
   padding: 6px !important;
   margin: 0 !important;
-  width: 100% !important;
+  width: 100% !important; 
 }
 .stButton > button:hover {
   color: var(--text) !important;
@@ -295,9 +296,8 @@ def fetch_targets():
             
         return df_tgt
     except Exception as e:
-        # Added a clearer warning for 401 Unauthorized errors regarding Google Sheets permissions
         if "401" in str(e):
-            st.error("⚠️ **Google Sheets Target Sync Error (401 Unauthorized):** Your Google Sheet is set to 'Restricted'. Please update the Share settings to 'Anyone with the link can view' for the targets to populate.")
+            st.error("⚠️ **Google Sheets Sync Error (401):** Your Google Sheet is set to 'Restricted'. Please update Share settings to 'Anyone with the link can view'.")
         else:
             st.error(f"⚠️ Target Data Pipeline Sync Error: {e}")
         return pd.DataFrame()
@@ -320,7 +320,7 @@ yesterday = today - datetime.timedelta(days=1)
 
 # ── Sidebar Controls ──────────────────────────────────────────────────────────
 st.sidebar.markdown("### 🛠️ Data Controls")
-if st.sidebar.button("🔄 Force Refresh Data", type="primary", use_container_width=True):
+if st.sidebar.button("🔄 Force Refresh Data", type="primary"):
     st.cache_data.clear()
     st.rerun()
 
@@ -470,7 +470,8 @@ def draw_sortable_header(table_id, col_specs):
     
     for idx, (label, field, weight) in enumerate(col_specs):
         icon = " ▴" if current_col == field and not current_desc else (" ▾" if current_col == field else "")
-        if grid_cols[idx].button(f"{label}{icon}", key=f"btn_{table_id}_{str(field)}", use_container_width=True):
+        # Removed use_container_width entirely. The CSS now forces full width cleanly.
+        if grid_cols[idx].button(f"{label}{icon}", key=f"btn_{table_id}_{str(field)}"):
             if current_col == field:
                 st.session_state[state_key] = (field, not current_desc)
             else:
@@ -543,15 +544,20 @@ with tab1:
                 marker=dict(size=8, color=BAR_CUR)
             ))
             fig_trend.update_layout(**PLOT_LAYOUT, height=220)
-            st.plotly_chart(fig_trend, use_container_width=True, config={"displayModeBar": False}, key="8_week_trend_line_chart")
+            
+            # The CSS automatically sets this to full width, no parameter necessary!
+            st.plotly_chart(fig_trend, config={"displayModeBar": False}, key="8_week_trend_line_chart")
             
             section("Client × Week Matrix View (FT Volume & WoW Changes)")
             matrix_src = df_trend.groupby(['company_name', 'Week_Start']).size().unstack(fill_value=0)
             col_specs_week = [("Client Profile", "company_name", 3)] + [(f"W/C {w.strftime('%d %b')}", w, 1) for w in active_weeks]
-            w_col, w_desc = draw_sortable_header("client_week_matrix", col_specs_week)
+            w_col, w_desc = draw_sortable_header("client_week_matrix_v2", col_specs_week)
             
-            if w_col == "company_name": matrix_src = matrix_src.sort_index(ascending=not w_desc)
-            else: matrix_src = matrix_src.sort_values(by=w_col, ascending=not w_desc)
+            # Bulletproof fallback to index to avoid any caching KeyErrors
+            if w_col == "company_name" or w_col not in matrix_src.columns: 
+                matrix_src = matrix_src.sort_index(ascending=not w_desc)
+            else: 
+                matrix_src = matrix_src.sort_values(by=w_col, ascending=not w_desc)
                 
             m_tbl = '<div class="tw" style="overflow-x:auto;"><table class="dash-table"><tbody>'
             for client_name, row in matrix_src.iterrows():
@@ -595,10 +601,10 @@ with tab1:
         mtd_layout["height"] = 240
         mtd_layout["showlegend"] = True
         fig_mtd.update_layout(**mtd_layout)
-        st.plotly_chart(fig_mtd, use_container_width=True, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
+        st.plotly_chart(fig_mtd, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
     section("All Clients Performance Analysis")
-    c_col, c_desc = draw_sortable_header("client_main", [
+    c_col, c_desc = draw_sortable_header("client_main_v2", [
         ("Client Name", "company_name", 3), 
         ("Cur FT", "cur", 1.5), ("Proj FT", "proj", 1.5), 
         ("Target", "target", 1.5), ("Gap", "gap", 1.5), 
@@ -625,7 +631,7 @@ with tab1:
     section("Growing Clients Matrix — Ranked by % Surge")
     growing_clients = client_mat[client_mat["delta"] > 0]
     if not growing_clients.empty:
-        gc_col, gc_desc = draw_sortable_header("growing_clients", [
+        gc_col, gc_desc = draw_sortable_header("growing_clients_v2", [
             ("Client Name", "company_name", 3), 
             ("Cur FT", "cur", 1.5), ("Proj FT", "proj", 1.5), 
             ("Target", "target", 1.5), ("Gap", "gap", 1.5), 
@@ -652,7 +658,7 @@ with tab1:
         st.info("No segments meet expansion target profile bounds currently.")
 
     section("Dynamic Vendor Line (VL) Analytics Tracker (By Client)")
-    vbc_col, vbc_desc = draw_sortable_header("vl_by_client_table", [
+    vbc_col, vbc_desc = draw_sortable_header("vl_by_client_table_v2", [
         ("Vendor Line (VL)", "vl_name", 2.5), ("Client", "company_name", 2.5), 
         ("Cur FT", "cur", 1.4), ("Proj FT", "proj", 1.4), 
         ("Target", "target", 1.4), ("Gap", "gap", 1.4), 
@@ -677,7 +683,7 @@ with tab1:
     st.markdown(t_html, unsafe_allow_html=True)
 
     section("All Vendor Lines (VL) Performance Analysis")
-    av_col, av_desc = draw_sortable_header("vl_main_table", [
+    av_col, av_desc = draw_sortable_header("vl_main_table_v2", [
         ("Vendor Line", "vl_name", 3), 
         ("Cur FT", "cur", 1.5), ("Proj FT", "proj", 1.5), 
         ("Target", "target", 1.5), ("Gap", "gap", 1.5), 
@@ -710,7 +716,7 @@ with tab2:
     r_left, r_right = st.columns(2)
     with r_left:
         section("Regional Zone Allocations Table")
-        rl_col, rl_desc = draw_sortable_header("reg_main", [
+        rl_col, rl_desc = draw_sortable_header("reg_main_v2", [
             ("Region", "region", 3), ("Cur FT", "cur", 1.5), 
             ("Target", "target", 1.5), ("Gap", "gap", 1.5), 
             ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)
@@ -736,7 +742,7 @@ with tab2:
         section("Cluster Lead (CL) Allocations Table")
         if "CL" in df.columns:
             cl_mat = compute_comparison_matrix(df, "CL", t_df)
-            cl_col, cl_desc = draw_sortable_header("cl_main_table", [
+            cl_col, cl_desc = draw_sortable_header("cl_main_table_v2", [
                 ("Cluster Lead", "CL", 3), ("Cur FT", "cur", 1.5), 
                 ("Target", "target", 1.5), ("Gap", "gap", 1.5), 
                 ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)
@@ -770,7 +776,7 @@ with tab2:
             df_cl_drill = df[df["CL"].isin(sel_drill_cl)]
             am_drill_mat = compute_comparison_matrix(df_cl_drill, "am_name", t_df)
             
-            amd_col, amd_desc = draw_sortable_header("am_drill_table", [
+            amd_col, amd_desc = draw_sortable_header("am_drill_table_v2", [
                 ("Account Manager", "am_name", 3), ("Cur FT", "cur", 1.5), 
                 ("Proj FT", "proj", 1.5), ("Target", "target", 1.5), 
                 ("Gap", "gap", 1.5), ("Δ Vol", "delta", 1.5)
