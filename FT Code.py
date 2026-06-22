@@ -16,7 +16,7 @@ st.set_page_config(
 # ── Design tokens & Premium Theme System ──────────────────────────────────────
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600;700;800&display=swap');
 
 :root {
   --bg:        #0f1117;
@@ -123,6 +123,9 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   height:2px;
   background: linear-gradient(90deg, var(--blue-b), #b08cff);
 }
+.kpi-dark::before {
+  background: linear-gradient(90deg, var(--purple), var(--purple-bg)) !important;
+}
 .kpi-lbl {
   font-size: 10px;
   font-weight: 700;
@@ -202,7 +205,6 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
   color: var(--muted);
   margin-bottom: 10px;
 }
-.rca-body { font-size: 13px; line-height: 1.75; color: var(--text); }
 .rca-item {
   display: flex;
   gap: 10px;
@@ -306,18 +308,20 @@ df_base = raw.copy()
 ft = "first_date_of_work"
 df_base[ft] = pd.to_datetime(df_base[ft], errors="coerce").dt.date
 
-# ── Dynamic Time Windows (With Full Lookback Exclusion Offsets) ───────────────
+# ── Global Scope Temporal Anchoring ───────────────────────────────────────────
+today = datetime.date.today()
+yesterday = today - datetime.timedelta(days=1)
+
 st.sidebar.markdown("### 🎛️ Parameters")
 mode = st.sidebar.selectbox("Comparison Window Mode", ["WTD", "MTD"])
+
+# ── Incomplete Week Exclusion Toggle ──
 exclude_current = st.sidebar.checkbox("Exclude Current Incomplete Week", value=False)
 
 def get_windows(mode, exclude_current):
-    today     = datetime.date.today()
-    yesterday = today - datetime.timedelta(days=1)
     if mode == "WTD":
         dow = today.weekday()
         if exclude_current:
-            # Shift anchor to isolate the last complete week (Monday to Sunday)
             cs = today - datetime.timedelta(days=dow + 7)
             ce = cs + datetime.timedelta(days=6)
             ps = cs - datetime.timedelta(days=7)
@@ -340,6 +344,17 @@ def get_windows(mode, exclude_current):
 
 cs, ce, ps, pe = get_windows(mode, exclude_current)
 
+# ── Run-Rate Projection Multiplier Engine ─────────────────────────────────────
+days_elapsed = (ce - cs).days + 1
+if mode == "WTD":
+    total_days = 7
+else:
+    # Compute total days in current calendar month dynamically
+    next_month = cs.replace(day=28) + datetime.timedelta(days=4)
+    total_days = (next_month - datetime.timedelta(days=next_month.day)).day
+
+proj_multiplier = total_days / days_elapsed if days_elapsed > 0 else 1.0
+
 # ── Global Sidebar Segment Filters ────────────────────────────────────────────
 st.sidebar.markdown("### 🔍 Segment Filters")
 client_opts = sorted(list(df_base["company_name"].dropna().unique()))
@@ -351,7 +366,6 @@ selected_cities = st.sidebar.multiselect("City Scope", city_opts, key="global_fi
 vl_opts = sorted(list(df_base["vl_name"].dropna().unique()))
 selected_vls = st.sidebar.multiselect("Vendor Line Scope", vl_opts, key="global_filter_vl")
 
-# Support new Cluster Lead column filtering elegantly
 cl_opts = sorted(list(df_base["CL"].dropna().unique())) if "CL" in df_base.columns else []
 selected_cls = st.sidebar.multiselect("Cluster Lead (CL) Scope", cl_opts, key="global_filter_cl")
 
@@ -366,7 +380,7 @@ st.markdown(f"""
 <div class="dash-header">
   <div>
     <div class="dash-title">Vahan <span>Performance Analytics</span> Dashboard</div>
-    <div class="dash-meta"><span class="live-dot"></span>Live Tracking View · Selected boundaries applied</div>
+    <div class="dash-meta"><span class="live-dot"></span>Live Lookback Tracking · Active Bounds as of Yesterday</div>
   </div>
   <div><span class="pill pb" style="font-size:11px;">Current: {cs.strftime('%b %d')} - {ce.strftime('%b %d')} vs Previous: {ps.strftime('%b %d')} - {pe.strftime('%b %d')}</span></div>
 </div>""", unsafe_allow_html=True)
@@ -400,6 +414,7 @@ def compute_comparison_matrix(dataframe, group_key):
     res = pd.concat([c, p], axis=1).fillna(0).astype(int)
     res["delta"] = res["cur"] - res["prv"]
     res["pct"] = np.where(res["prv"] > 0, (res["delta"] / res["prv"]) * 100, np.nan)
+    res["proj"] = (res["cur"] * proj_multiplier).round().astype(int)
     return res
 
 def draw_sortable_header(table_id, col_specs):
@@ -420,17 +435,21 @@ def draw_sortable_header(table_id, col_specs):
             st.rerun()
     return st.session_state[state_key]
 
+def section(title):
+    st.markdown(f'<div class="sec-ttl">{title}<div class="sec-ttl-line"></div></div>', unsafe_allow_html=True)
+
 # ── Primary Metric Matrices Engine Calculations ──────────────────────────────
 cur_tot = len(df[(df[ft] >= cs) & (df[ft] <= ce)])
 prv_tot = len(df[(df[ft] >= ps) & (df[ft] <= pe)])
 dlt_tot = cur_tot - prv_tot
 pct_tot = (dlt_tot / prv_tot * 100) if prv_tot > 0 else np.nan
+proj_tot = int(round(cur_tot * proj_multiplier))
 
 client_mat = compute_comparison_matrix(df, "company_name").reset_index()
-client_mat.columns = ["Client", "cur", "prv", "delta", "pct"]
+client_mat.columns = ["Client", "cur", "prv", "delta", "pct", "proj"]
 
 vl_master = compute_comparison_matrix(df, "vl_name").reset_index()
-vl_master.columns = ["VL", "cur", "prv", "delta", "pct"]
+vl_master.columns = ["VL", "cur", "prv", "delta", "pct", "proj"]
 
 # ── Tab Navigation Panels ─────────────────────────────────────────────────────
 tab1, tab2, tab3 = st.tabs(["📦 Client Operations", "🗺️ CL & Region Maps", "🤖 AI Narrative & RCA"])
@@ -439,11 +458,12 @@ tab1, tab2, tab3 = st.tabs(["📦 Client Operations", "🗺️ CL & Region Maps"
 # TAB 1: CLIENT OPERATIONS
 # ==============================================================================
 with tab1:
-    k1, k2, k3, k4 = st.columns(4)
+    k1, k2, k3, k4, k5 = st.columns(5)
     with k1: st.markdown(kpi_html("Current Period FT", fmt(cur_tot)), unsafe_allow_html=True)
     with k2: st.markdown(kpi_html("Previous Period FT", fmt(prv_tot)), unsafe_allow_html=True)
-    with k3: st.markdown(kpi_html("Δ Volume Shift", fmt(dlt_tot), pill_html=volume_pill(dlt_tot)), unsafe_allow_html=True)
-    with k4: st.markdown(kpi_html("Δ % Shift", f"{pct_tot:+.1f}%" if pd.notna(pct_tot) else "—", pill_html=pill_markup(pct_tot)), unsafe_allow_html=True)
+    with k3: st.markdown(kpi_html("Projected Full FT", fmt(proj_tot), sub=f"Run-rate rate: {proj_multiplier:.2f}x"), unsafe_allow_html=True)
+    with k4: st.markdown(kpi_html("Δ Volume Shift", fmt(dlt_tot), pill_html=volume_pill(dlt_tot)), unsafe_allow_html=True)
+    with k5: st.markdown(kpi_html("Δ % Shift", f"{pct_tot:+.1f}%" if pd.notna(pct_tot) else "—", pill_html=pill_markup(pct_tot)), unsafe_allow_html=True)
 
     # Conditional Chart Layout Rule
     if mode == "WTD":
@@ -505,7 +525,7 @@ with tab1:
             st.markdown(m_tbl, unsafe_allow_html=True)
 
     elif mode == "MTD":
-        # ── Day-of-Month Run-Rate Performance View ──
+        # Day-of-Month Run-Rate Performance View
         section("Month-To-Date (MTD) Day-by-Day Run-Rate Tracking")
         sub_cur = df[(df[ft] >= cs) & (df[ft] <= ce)]
         sub_prv = df[(df[ft] >= ps) & (df[ft] <= pe)]
@@ -522,19 +542,20 @@ with tab1:
         fig_mtd.update_layout(**PLOT_LAYOUT, height=240, showlegend=True)
         st.plotly_chart(fig_mtd, use_container_width=True, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
-    # Main Client Performance Execution Matrix
+    # Main Client Performance Execution Matrix (With Projected Column)
     section("All Clients Performance Analysis")
-    c_col, c_desc = draw_sortable_header("client_main", [("Client Name", "Client", 4), ("Current FT", "cur", 2), ("Previous FT", "prv", 2), ("Δ Vol", "delta", 2), ("Δ %", "pct", 2)])
+    c_col, c_desc = draw_sortable_header("client_main", [("Client Name", "Client", 3), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Previous FT", "prv", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
     client_mat = client_mat.sort_values(c_col, ascending=not c_desc)
 
     t_html = '<div class="tw"><table class="dash-table"><tbody>'
     for _, r in client_mat.iterrows():
         t_html += f"""<tr>
-            <td style="width:33.3%; font-weight:600;">{r['Client']}</td>
+            <td style="width:25%; font-weight:600;">{r['Client']}</td>
             <td class="n" style="width:16.6%;">{fmt(r['cur'])}</td>
+            <td class="n" style="width:16.6%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
             <td class="n" style="width:16.6%; color:var(--muted);">{fmt(r['prv'])}</td>
-            <td class="n" style="width:16.6%;">{volume_pill(r['delta'])}</td>
-            <td class="n" style="width:16.6%;">{pill_markup(r['pct'])}</td>
+            <td class="n" style="width:12.5%;">{volume_pill(r['delta'])}</td>
+            <td class="n" style="width:12.5%;">{pill_markup(r['pct'])}</td>
         </tr>"""
     t_html += "</tbody></table></div>"
     st.markdown(t_html, unsafe_allow_html=True)
@@ -543,17 +564,18 @@ with tab1:
     section("Growing Clients Matrix — Ranked by % Surge")
     growing_clients = client_mat[client_mat["delta"] > 0]
     if not growing_clients.empty:
-        gc_col, gc_desc = draw_sortable_header("growing_clients", [("Client Name", "Client", 4), ("Current FT", "cur", 2), ("Previous FT", "prv", 2), ("Δ Vol", "delta", 2), ("Δ %", "pct", 2)])
+        gc_col, gc_desc = draw_sortable_header("growing_clients", [("Client Name", "Client", 3), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Previous FT", "prv", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
         growing_clients = growing_clients.sort_values(gc_col, ascending=not gc_desc)
         
         t_html = '<div class="tw"><table class="dash-table"><tbody>'
         for _, r in growing_clients.iterrows():
             t_html += f"""<tr>
-                <td style="width:33.3%; font-weight:600; color:var(--green);">{r['Client']}</td>
+                <td style="width:25%; font-weight:600; color:var(--green);">{r['Client']}</td>
                 <td class="n" style="width:16.6%;">{fmt(r['cur'])}</td>
+                <td class="n" style="width:16.6%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
                 <td class="n" style="width:16.6%; color:var(--muted);">{fmt(r['prv'])}</td>
-                <td class="n" style="width:16.6%;">{volume_pill(r['delta'])}</td>
-                <td class="n" style="width:16.6%;">{pill_markup(r['pct'])}</td>
+                <td class="n" style="width:12.5%;">{volume_pill(r['delta'])}</td>
+                <td class="n" style="width:12.5%;">{pill_markup(r['pct'])}</td>
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
@@ -567,15 +589,16 @@ with tab1:
     with vl_left:
         section("Top 10 Degrowing Vendor Lines (VL)")
         degrow_vl = vl_master[vl_master["delta"] < 0].nsmallest(10, "delta")
-        dv_col, dv_desc = draw_sortable_header("degrow_vl_table", [("Vendor Partner Line (VL)", "VL", 5), ("Current FT", "cur", 2), ("Δ Deficit", "delta", 3)])
+        dv_col, dv_desc = draw_sortable_header("degrow_vl_table", [("Vendor Partner Line (VL)", "VL", 4), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Δ Deficit", "delta", 2)])
         degrow_vl = degrow_vl.sort_values(dv_col, ascending=not dv_desc)
         
         t_html = '<div class="tw"><table class="dash-table"><tbody>'
         for _, r in degrow_vl.iterrows():
             t_html += f"""<tr>
-                <td style="width:50%; font-weight:600;">{r['VL']}</td>
+                <td style="width:40%; font-weight:600;">{r['VL']}</td>
                 <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
-                <td class="n" style="width:30%;">{volume_pill(r['delta'])}</td>
+                <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
@@ -583,15 +606,16 @@ with tab1:
     with vl_right:
         section("Top 10 Growing Vendor Lines (VL)")
         grow_vl = vl_master[vl_master["delta"] > 0].nlargest(10, "delta")
-        gv_col, gv_desc = draw_sortable_header("grow_vl_table", [("Vendor Partner Line (VL)", "VL", 5), ("Current FT", "cur", 2), ("Δ Surge", "delta", 3)])
+        gv_col, gv_desc = draw_sortable_header("grow_vl_table", [("Vendor Partner Line (VL)", "VL", 4), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Δ Surge", "delta", 2)])
         grow_vl = grow_vl.sort_values(gv_col, ascending=not gv_desc)
         
         t_html = '<div class="tw"><table class="dash-table"><tbody>'
         for _, r in grow_vl.iterrows():
             t_html += f"""<tr>
-                <td style="width:50%; font-weight:600; color:var(--green);">{r['VL']}</td>
+                <td style="width:40%; font-weight:600; color:var(--green);">{r['VL']}</td>
                 <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
-                <td class="n" style="width:30%;">{volume_pill(r['delta'])}</td>
+                <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
@@ -601,21 +625,22 @@ with tab1:
 # ==============================================================================
 with tab2:
     reg_mat = compute_comparison_matrix(df, "region").reset_index()
-    reg_mat.columns = ["Region", "cur", "prv", "delta", "pct"]
+    reg_mat.columns = ["Region", "cur", "prv", "delta", "pct", "proj"]
 
     r_left, r_right = st.columns(2)
     with r_left:
         section("Regional Zone Allocations Table")
-        rl_col, rl_desc = draw_sortable_header("reg_main", [("Region Layer", "Region", 4), ("Current", "cur", 2), ("Δ Vol", "delta", 2), ("Δ %", "pct", 2)])
+        rl_col, rl_desc = draw_sortable_header("reg_main", [("Region Layer", "Region", 3), ("Current", "cur", 2), ("Projected", "proj", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
         reg_mat = reg_mat.sort_values(rl_col, ascending=not rl_desc)
         
         t_html = '<div class="tw"><table class="dash-table"><tbody>'
         for _, r in reg_mat.iterrows():
             t_html += f"""<tr>
-                <td style="width:40%; font-weight:600;">{r['Region']}</td>
+                <td style="width:30%; font-weight:600;">{r['Region']}</td>
                 <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
-                <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
-                <td class="n" style="width:20%;">{pill_markup(r['pct'])}</td>
+                <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
+                <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
@@ -624,24 +649,25 @@ with tab2:
         section("Cluster Lead (CL) Allocations Table")
         if "CL" in df.columns:
             cl_mat = compute_comparison_matrix(df, "CL").reset_index()
-            cl_mat.columns = ["CL", "cur", "prv", "delta", "pct"]
-            cl_col, cl_desc = draw_sortable_header("cl_main_table", [("Cluster Lead", "CL", 4), ("Current", "cur", 2), ("Δ Vol", "delta", 2), ("Δ %", "pct", 2)])
+            cl_mat.columns = ["CL", "cur", "prv", "delta", "pct", "proj"]
+            cl_col, cl_desc = draw_sortable_header("cl_main_table", [("Cluster Lead", "CL", 3), ("Current", "cur", 2), ("Projected", "proj", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
             cl_mat = cl_mat.sort_values(cl_col, ascending=not cl_desc)
             
             t_html = '<div class="tw"><table class="dash-table"><tbody>'
             for _, r in cl_mat.iterrows():
                 t_html += f"""<tr>
-                    <td style="width:40%; font-weight:600;">{r['CL']}</td>
+                    <td style="width:30%; font-weight:600;">{r['CL']}</td>
                     <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
-                    <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
-                    <td class="n" style="width:20%;">{pill_markup(r['pct'])}</td>
+                    <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                    <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
+                    <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
                 </tr>"""
             t_html += "</tbody></table></div>"
             st.markdown(t_html, unsafe_allow_html=True)
         else:
             st.info("`CL` metadata parameter missing from core query.")
 
-    # ── Interactive Cluster Lead to Account Manager Drilldown Mapping Component ──
+    # Interactive Cluster Lead to Account Manager Drilldown Mapping Component
     if "CL" in df.columns and "am_name" in df.columns:
         section("Interactive Drill-Down: Account Managers under Selected Cluster Lead")
         cl_list = sorted(list(df["CL"].dropna().unique()))
@@ -650,18 +676,19 @@ with tab2:
             if sel_drill_cl:
                 df_cl_drill = df[df["CL"] == sel_drill_cl]
                 am_drill_mat = compute_comparison_matrix(df_cl_drill, "am_name").reset_index()
-                am_drill_mat.columns = ["AM Name", "cur", "prv", "delta", "pct"]
+                am_drill_mat.columns = ["AM Name", "cur", "prv", "delta", "pct", "proj"]
                 
-                amd_col, amd_desc = draw_sortable_header("am_drill_table", [("Account Manager Name", "AM Name", 4), ("Current FT", "cur", 2), ("Δ Vol", "delta", 2), ("Δ %", "pct", 2)])
+                amd_col, amd_desc = draw_sortable_header("am_drill_table", [("Account Manager Name", "AM Name", 3), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
                 am_drill_mat = am_drill_mat.sort_values(amd_col, ascending=not amd_desc)
                 
                 t_html = '<div class="tw"><table class="dash-table"><tbody>'
                 for _, r in am_drill_mat.iterrows():
                     t_html += f"""<tr>
-                        <td style="width:40%; font-weight:600; color:var(--blue);">{r['AM Name']}</td>
+                        <td style="width:30%; font-weight:600; color:var(--blue);">{r['AM Name']}</td>
                         <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
-                        <td class="n" style="width:20%;">{volume_pill(r['delta'])}</td>
-                        <td class="n" style="width:20%;">{pill_markup(r['pct'])}</td>
+                        <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                        <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
+                        <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
                     </tr>"""
                 t_html += "</tbody></table></div>"
                 st.markdown(t_html, unsafe_allow_html=True)
@@ -672,7 +699,7 @@ with tab2:
     if len(gap_clients) > 0:
         df_gap = df[df["company_name"].isin(gap_clients)]
         gap_reg = compute_comparison_matrix(df_gap, ["company_name", "region"]).reset_index()
-        gap_reg.columns = ["Client", "Region", "cur", "prv", "delta", "pct"]
+        gap_reg.columns = ["Client", "Region", "cur", "prv", "delta", "pct", "proj"]
         
         gr_col, gr_desc = draw_sortable_header("gap_reg_table", [("Client Name", "Client", 3), ("Regional Cluster", "Region", 3), ("Current FT", "cur", 2), ("Δ Volume Drop", "delta", 2), ("Δ %", "pct", 2)])
         gap_reg = gap_reg.sort_values(gr_col, ascending=not gr_desc)
@@ -693,17 +720,17 @@ with tab2:
     section("Growing Regions Profile — Ranked by % Surge")
     growing_regions = reg_mat[reg_mat["delta"] > 0]
     if not growing_regions.empty:
-        grg_col, grg_desc = draw_sortable_header("growing_regions_tbl", [("Region Zone", "Region", 4), ("Current", "cur", 2), ("Previous", "prv", 2), ("Δ Vol", "delta", 2), ("Δ %", "pct", 2)])
+        grg_col, grg_desc = draw_sortable_header("growing_regions_tbl", [("Region Zone", "Region", 3), ("Current", "cur", 2), ("Projected", "proj", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
         growing_regions = growing_regions.sort_values(grg_col, ascending=not grg_desc)
         
         t_html = '<div class="tw"><table class="dash-table"><tbody>'
         for _, r in growing_regions.iterrows():
             t_html += f"""<tr>
-                <td style="width:33.3%; font-weight:600; color:var(--green);">{r['Region']}</td>
-                <td class="n" style="width:16.6%;">{fmt(r['cur'])}</td>
-                <td class="n" style="width:16.6%; color:var(--muted);">{fmt(r['prv'])}</td>
-                <td class="n" style="width:16.6%;">{volume_pill(r['delta'])}</td>
-                <td class="n" style="width:16.6%;">{pill_markup(r['pct'])}</td>
+                <td style="width:30%; font-weight:600; color:var(--green);">{r['Region']}</td>
+                <td class="n" style="width:20%;">{fmt(r['cur'])}</td>
+                <td class="n" style="width:20%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                <td class="n" style="width:15%;">{volume_pill(r['delta'])}</td>
+                <td class="n" style="width:15%;">{pill_markup(r['pct'])}</td>
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
