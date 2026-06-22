@@ -418,10 +418,17 @@ def kpi_html(label, value, sub="", pill_html=""):
       <div class="kpi-sub">{sub} {pill_html}</div>
     </div>"""
 
+# Safely compute comparison matrix bridging empty dataframe errors
 def compute_comparison_matrix(dataframe, group_key):
     c = dataframe[(dataframe[ft] >= cs) & (dataframe[ft] <= ce)].groupby(group_key).size().rename("cur")
     p = dataframe[(dataframe[ft] >= ps) & (dataframe[ft] <= pe)].groupby(group_key).size().rename("prv")
-    res = pd.concat([c, p], axis=1).fillna(0).astype(int)
+    res = pd.concat([c, p], axis=1)
+    
+    # Safe guards for when segment returns zero results
+    if "cur" not in res.columns: res["cur"] = 0
+    if "prv" not in res.columns: res["prv"] = 0
+        
+    res = res.fillna(0).astype(int)
     res["delta"] = res["cur"] - res["prv"]
     res["pct"] = np.where(res["prv"] > 0, (res["delta"] / res["prv"]) * 100, np.nan)
     res["proj"] = (res["cur"] * proj_multiplier).round().astype(int)
@@ -437,7 +444,7 @@ def draw_sortable_header(table_id, col_specs):
     
     for idx, (label, field, weight) in enumerate(col_specs):
         icon = " ▴" if current_col == field and not current_desc else (" ▾" if current_col == field else "")
-        if grid_cols[idx].button(f"{label}{icon}", key=f"btn_{table_id}_{str(field)}", use_container_width=True):
+        if grid_cols[idx].button(f"{label}{icon}", key=f"btn_{table_id}_{str(field)}", width="stretch"):
             if current_col == field:
                 st.session_state[state_key] = (field, not current_desc)
             else:
@@ -456,7 +463,7 @@ def bar_chart(df_in, x_col, y_cols, labels, colors, title="", height=240, key=No
     layout["height"] = height
     layout["title"]  = dict(text=title, font=dict(size=12, color="#eaeaea"), x=0)
     fig.update_layout(**layout)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=key)
 
 # ── Primary Metric Matrices Engine Calculations ──────────────────────────────
 cur_tot = len(df[(df[ft] >= cs) & (df[ft] <= ce)])
@@ -512,7 +519,7 @@ with tab1:
                 marker=dict(size=8, color=BAR_CUR)
             ))
             fig_trend.update_layout(**PLOT_LAYOUT, height=220)
-            st.plotly_chart(fig_trend, use_container_width=True, config={"displayModeBar": False}, key="8_week_trend_line_chart")
+            st.plotly_chart(fig_trend, width="stretch", config={"displayModeBar": False}, key="8_week_trend_line_chart")
             
             section("Client × Week Matrix View (FT Volume & WoW Changes)")
             matrix_src = df_trend.groupby(['company_name', 'Week_Start']).size().unstack(fill_value=0)
@@ -559,10 +566,9 @@ with tab1:
         fig_mtd.add_trace(go.Scatter(x=mtd_trend["Day of Month"], y=mtd_trend["Current Month"], name="Current Month Runrate", mode='lines+markers', line=dict(color=BAR_CUR, width=3)))
         
         mtd_layout = dict(**PLOT_LAYOUT)
-        mtd_layout["showlegend"] = True
         mtd_layout["height"] = 240
         fig_mtd.update_layout(**mtd_layout)
-        st.plotly_chart(fig_mtd, use_container_width=True, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
+        st.plotly_chart(fig_mtd, width="stretch", config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
     # Main Client Performance Execution Matrix
     section("All Clients Performance Analysis")
