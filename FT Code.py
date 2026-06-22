@@ -323,10 +323,14 @@ df_base[ft] = pd.to_datetime(df_base[ft], errors="coerce").dt.date
 today = datetime.date.today()
 yesterday = today - datetime.timedelta(days=1)
 
+# ── Sidebar Controls ──────────────────────────────────────────────────────────
+st.sidebar.markdown("### 🛠️ Data Controls")
+if st.sidebar.button("🔄 Force Refresh Data", type="primary"):
+    st.cache_data.clear()
+    st.rerun()
+
 st.sidebar.markdown("### 🎛️ Parameters")
 mode = st.sidebar.selectbox("Comparison Window Mode", ["WTD", "MTD"])
-
-# ── Incomplete Week Exclusion Toggle ──
 exclude_current = st.sidebar.checkbox("Exclude Current Incomplete Week", value=False)
 
 def get_windows(mode, exclude_current):
@@ -772,7 +776,6 @@ with tab3:
     if "CL" in df.columns and 'cl_mat' in locals():
         for _, r in cl_mat.iterrows():   pool.append({"type": "Cluster Lead (CL)", "name": r["CL"], "delta": r["delta"]})
     
-    # Safely instantiate dataframe explicitly outlining the target schema
     m_df = pd.DataFrame(pool, columns=["type", "name", "delta"]).dropna()
     leaders = m_df[m_df["delta"] > 0].nlargest(3, "delta") if not m_df.empty else pd.DataFrame()
     laggards = m_df[m_df["delta"] < 0].nsmallest(3, "delta") if not m_df.empty else pd.DataFrame()
