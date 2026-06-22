@@ -263,7 +263,6 @@ BAR_PRV  = "#4a4f6a"
 
 # ── Data Fetch Pipelines ──────────────────────────────────────────────────────
 API_URL = "https://redash.vahan.link/api/queries/17613/results.json?api_key=4aFm2iOoyx8I91svQccdeZr0jmaiUsMFSRinZcmu"
-# Clean CSV export link generated from Google Sheet URL
 TARGETS_URL = "https://docs.google.com/spreadsheets/d/1S9XGqCiSHXjXbIrjJ6uoaDBRlTgQel__uaoc8S7zsa0/export?format=csv&gid=0"
 
 @st.cache_data(ttl=3600)
@@ -280,7 +279,6 @@ def fetch_data():
 def fetch_targets():
     try:
         df_tgt = pd.read_csv(TARGETS_URL)
-        # Normalize potential column name variations from sheet
         col_map = {
             'CM': 'am_name', 'AM': 'am_name',
             'Client': 'company_name', 'Company': 'company_name',
@@ -290,7 +288,6 @@ def fetch_targets():
         }
         df_tgt = df_tgt.rename(columns=lambda x: col_map.get(str(x).strip(), str(x).strip()))
         
-        # Ensure Target column is properly parsed to numeric
         if 'target' in df_tgt.columns:
             df_tgt['target'] = pd.to_numeric(df_tgt['target'].astype(str).str.replace(r'[$,]', '', regex=True), errors='coerce').fillna(0)
         else:
@@ -298,7 +295,11 @@ def fetch_targets():
             
         return df_tgt
     except Exception as e:
-        st.error(f"⚠️ Target Data Pipeline Sync Error: {e}")
+        # Added a clearer warning for 401 Unauthorized errors regarding Google Sheets permissions
+        if "401" in str(e):
+            st.error("⚠️ **Google Sheets Target Sync Error (401 Unauthorized):** Your Google Sheet is set to 'Restricted'. Please update the Share settings to 'Anyone with the link can view' for the targets to populate.")
+        else:
+            st.error(f"⚠️ Target Data Pipeline Sync Error: {e}")
         return pd.DataFrame()
 
 raw = fetch_data()
@@ -429,7 +430,6 @@ def kpi_html(label, value, sub="", pill_html=""):
     </div>"""
 
 def compute_comparison_matrix(dataframe, group_key, target_df=None):
-    # Group logic accepts either string or list of strings
     c = dataframe[(dataframe[ft] >= cs) & (dataframe[ft] <= ce)].groupby(group_key).size().rename("cur")
     p = dataframe[(dataframe[ft] >= ps) & (dataframe[ft] <= pe)].groupby(group_key).size().rename("prv")
     res = pd.concat([c, p], axis=1).reset_index()
@@ -444,9 +444,7 @@ def compute_comparison_matrix(dataframe, group_key, target_df=None):
     res["pct"] = np.where(res["prv"] > 0, (res["delta"] / res["prv"]) * 100, np.nan)
     res["proj"] = (res["cur"] * proj_multiplier).round().astype(int)
     
-    # Process Google Sheet Target Merge safely
     if target_df is not None and not target_df.empty:
-        # if group_key is a list (e.g. for VL by Client), try to match the first primary key for target
         merge_key = group_key[0] if isinstance(group_key, list) else group_key
         if merge_key in target_df.columns:
             t_agg = target_df.groupby(merge_key)['target'].sum().reset_index()
@@ -505,13 +503,11 @@ tab1, tab2, tab3 = st.tabs(["📦 Client Operations", "🗺️ CL & Region Maps"
 # TAB 1: CLIENT OPERATIONS
 # ==============================================================================
 with tab1:
-    # ── Flash Cards Layout Consolidation ──
     k1, k2, k3, k4 = st.columns(4)
     k_color = "var(--green)" if dlt_tot >= 0 else "var(--red)"
     g_color = "var(--green)" if gap_tot >= 0 else "var(--red)"
     
     with k1: 
-        # Merged Current FT with Delta Vol and Delta % as sub-pills
         pills = volume_pill(dlt_tot) + " " + pill_markup(pct_tot)
         st.markdown(kpi_html("Current Period FT", f'<span style="color:{k_color}">{fmt(cur_tot)}</span>', pill_html=pills), unsafe_allow_html=True)
     with k2: 
@@ -551,10 +547,10 @@ with tab1:
             
             section("Client × Week Matrix View (FT Volume & WoW Changes)")
             matrix_src = df_trend.groupby(['company_name', 'Week_Start']).size().unstack(fill_value=0)
-            col_specs_week = [("Client Profile", "Client", 3)] + [(f"W/C {w.strftime('%d %b')}", w, 1) for w in active_weeks]
+            col_specs_week = [("Client Profile", "company_name", 3)] + [(f"W/C {w.strftime('%d %b')}", w, 1) for w in active_weeks]
             w_col, w_desc = draw_sortable_header("client_week_matrix", col_specs_week)
             
-            if w_col == "Client": matrix_src = matrix_src.sort_index(ascending=not w_desc)
+            if w_col == "company_name": matrix_src = matrix_src.sort_index(ascending=not w_desc)
             else: matrix_src = matrix_src.sort_values(by=w_col, ascending=not w_desc)
                 
             m_tbl = '<div class="tw" style="overflow-x:auto;"><table class="dash-table"><tbody>'
@@ -601,7 +597,6 @@ with tab1:
         fig_mtd.update_layout(**mtd_layout)
         st.plotly_chart(fig_mtd, use_container_width=True, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
-    # ── Main Client Matrix ──
     section("All Clients Performance Analysis")
     c_col, c_desc = draw_sortable_header("client_main", [
         ("Client Name", "company_name", 3), 
@@ -627,7 +622,35 @@ with tab1:
     t_html += "</tbody></table></div>"
     st.markdown(t_html, unsafe_allow_html=True)
 
-    # ── Dynamic VL Analytics Tracker (By Client) ──
+    section("Growing Clients Matrix — Ranked by % Surge")
+    growing_clients = client_mat[client_mat["delta"] > 0]
+    if not growing_clients.empty:
+        gc_col, gc_desc = draw_sortable_header("growing_clients", [
+            ("Client Name", "company_name", 3), 
+            ("Cur FT", "cur", 1.5), ("Proj FT", "proj", 1.5), 
+            ("Target", "target", 1.5), ("Gap", "gap", 1.5), 
+            ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)
+        ])
+        growing_clients = growing_clients.sort_values(gc_col, ascending=not gc_desc)
+        
+        t_html = '<div class="tw"><table class="dash-table"><tbody>'
+        for _, r in growing_clients.iterrows():
+            c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
+            g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
+            t_html += f"""<tr>
+                <td style="width:25%; font-weight:600; color:var(--green);">{r['company_name']}</td>
+                <td class="n" style="width:12.5%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                <td class="n" style="width:12.5%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                <td class="n" style="width:12.5%; color:var(--muted);">{fmt(r['target'])}</td>
+                <td class="n" style="width:12.5%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
+                <td class="n" style="width:12.5%;">{volume_pill(r['delta'])}</td>
+                <td class="n" style="width:12.5%;">{pill_markup(r['pct'])}</td>
+            </tr>"""
+        t_html += "</tbody></table></div>"
+        st.markdown(t_html, unsafe_allow_html=True)
+    else:
+        st.info("No segments meet expansion target profile bounds currently.")
+
     section("Dynamic Vendor Line (VL) Analytics Tracker (By Client)")
     vbc_col, vbc_desc = draw_sortable_header("vl_by_client_table", [
         ("Vendor Line (VL)", "vl_name", 2.5), ("Client", "company_name", 2.5), 
@@ -653,7 +676,6 @@ with tab1:
     t_html += "</tbody></table></div>"
     st.markdown(t_html, unsafe_allow_html=True)
 
-    # ── All Vendor Lines Analysis ──
     section("All Vendor Lines (VL) Performance Analysis")
     av_col, av_desc = draw_sortable_header("vl_main_table", [
         ("Vendor Line", "vl_name", 3), 
@@ -742,7 +764,6 @@ with tab2:
         section("Interactive Drill-Down: Account Managers under Selected Cluster Lead")
         cl_list = sorted(list(df["CL"].dropna().unique()))
         
-        # Upgraded to Multi-Select with All functionality
         sel_drill_cl = st.multiselect("Select Cluster Lead(s) for AM Drilldown", cl_list, default=cl_list, key="cl_drill_multiselect")
         
         if sel_drill_cl:
