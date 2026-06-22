@@ -55,8 +55,11 @@ html, body, [class*="css"], .stApp {
   line-height: 1.5;
 }
 
-/* Hide Streamlit components */
-#MainMenu, footer, header { visibility: hidden !important; }
+/* FIXED: Hide Streamlit clutter but preserve the native sidebar toggle arrow */
+#MainMenu, footer { visibility: hidden !important; }
+header { background: transparent !important; }
+[data-testid="stToolbar"] { visibility: hidden !important; }
+
 .block-container {
   padding: 1.5rem 2rem 4rem !important;
   max-width: 1440px !important;
@@ -285,8 +288,6 @@ PLOT_LAYOUT = dict(
 
 BAR_CUR  = "#2f7dd4"
 BAR_PRV  = "#4a4f6a"
-BAR_POS  = "#4a9e2f"
-BAR_NEG  = "#e05252"
 
 # ── Data Fetch Pipelines ──────────────────────────────────────────────────────
 API_URL = "https://redash.vahan.link/api/queries/17613/results.json?api_key=4aFm2iOoyx8I91svQccdeZr0jmaiUsMFSRinZcmu"
@@ -449,6 +450,16 @@ def draw_sortable_header(table_id, col_specs):
 def section(title):
     st.markdown(f'<div class="sec-ttl">{title}<div class="sec-ttl-line"></div></div>', unsafe_allow_html=True)
 
+def bar_chart(df_in, x_col, y_cols, labels, colors, title="", height=240, key=None):
+    fig = go.Figure()
+    for y, lbl, col in zip(y_cols, labels, colors):
+        fig.add_trace(go.Bar(x=df_in[x_col], y=df_in[y], name=lbl, marker_color=col, marker_line_width=0))
+    layout = dict(**PLOT_LAYOUT)
+    layout["height"] = height
+    layout["title"]  = dict(text=title, font=dict(size=12, color="#eaeaea"), x=0)
+    fig.update_layout(**layout)
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=key)
+
 # ── Primary Metric Matrices Engine Calculations ──────────────────────────────
 cur_tot = len(df[(df[ft] >= cs) & (df[ft] <= ce)])
 prv_tot = len(df[(df[ft] >= ps) & (df[ft] <= pe)])
@@ -470,7 +481,6 @@ tab1, tab2, tab3 = st.tabs(["📦 Client Operations", "🗺️ CL & Region Maps"
 # ==============================================================================
 with tab1:
     k1, k2, k3, k4, k5 = st.columns(5)
-    # Color code absolute numbers inside KPI cards based on Delta
     k_color = "var(--green)" if dlt_tot > 0 else ("var(--red)" if dlt_tot < 0 else "var(--text)")
     with k1: st.markdown(kpi_html("Current Period FT", f'<span style="color:{k_color}">{fmt(cur_tot)}</span>'), unsafe_allow_html=True)
     with k2: st.markdown(kpi_html("Previous Period FT", fmt(prv_tot)), unsafe_allow_html=True)
@@ -558,7 +568,6 @@ with tab1:
         fig_mtd.update_layout(**mtd_layout)
         st.plotly_chart(fig_mtd, width="stretch", config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
-    # Main Client Performance Execution Matrix
     section("All Clients Performance Analysis")
     c_col, c_desc = draw_sortable_header("client_main", [("Client Name", "Client", 3), ("Current FT", "cur", 2), ("Projected FT", "proj", 2), ("Previous FT", "prv", 2), ("Δ Vol", "delta", 1.5), ("Δ %", "pct", 1.5)])
     client_mat = client_mat.sort_values(c_col, ascending=not c_desc)
@@ -577,7 +586,6 @@ with tab1:
     t_html += "</tbody></table></div>"
     st.markdown(t_html, unsafe_allow_html=True)
 
-    # Growing Clients Table
     section("Growing Clients Matrix — Ranked by % Surge")
     growing_clients = client_mat[client_mat["delta"] > 0]
     if not growing_clients.empty:
@@ -600,7 +608,6 @@ with tab1:
     else:
         st.info("No segments meet expansion target profile bounds currently.")
 
-    # Dynamic Vendor Lines Tables
     section("Dynamic Vendor Line (VL) Analytics Tracker")
     vl_left, vl_right = st.columns(2)
     
