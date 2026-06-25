@@ -59,23 +59,6 @@ html, body, [class*="css"], .stApp {
 [data-testid="stToolbar"] { display: none !important; }
 header { background: transparent !important; }
 
-[data-testid="collapsedControl"] {
-  background-color: var(--surface2) !important;
-  border: 1px solid var(--br2) !important;
-  border-radius: 8px !important;
-  margin: 15px !important;
-  box-shadow: 0px 4px 10px rgba(0,0,0,0.5) !important;
-  transition: 0.2s ease !important;
-  z-index: 999999 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-}
-[data-testid="collapsedControl"]:hover {
-  background-color: var(--blue-bg) !important;
-  border-color: var(--blue-b) !important;
-}
-
 .block-container {
   padding: 2.5rem 2rem 4rem !important;
   max-width: 1440px !important;
@@ -371,7 +354,7 @@ def get_windows(mode, exclude_current):
 
 cs, ce, ps, pe = get_windows(mode, exclude_current)
 
-# ── Run-Rate Projection Multiplier Engine (Last 4 Weeks Base) ─────────────────
+# ── Run-Rate Projection Multiplier Engine ─────────────────────────────────────
 days_elapsed = (ce - cs).days + 1
 if mode == "WTD":
     total_days = 7
@@ -380,7 +363,6 @@ else:
     total_days = (next_month - datetime.timedelta(days=next_month.day)).day
 
 remaining_days = max(0, total_days - days_elapsed)
-
 l4w_e = yesterday
 l4w_s = l4w_e - datetime.timedelta(days=27)
 
@@ -448,6 +430,11 @@ def volume_pill(val):
     cls = "pg" if val >= 0 else "pr"
     return f'<span class="pill {cls}">{"+" if val > 0 else ""}{int(val):,}</span>'
 
+def contr_markup(delta, contr):
+    if pd.isna(contr) or delta == 0: return '<span class="td-muted">—</span>'
+    if delta > 0: return f'<span style="color:var(--green); font-size:10px; font-weight:700;">{contr:.1f}% Grw</span>'
+    return f'<span style="color:var(--red); font-size:10px; font-weight:700;">{contr:.1f}% Dip</span>'
+
 def kpi_html(label, value, sub="", pill_html=""):
     return f"""
     <div class="kpi">
@@ -503,11 +490,20 @@ def compute_comparison_matrix(dataframe, group_key, target_df=None):
     res["delta"] = res["cur"] - res["prv"]
     res["pct"] = np.where(res["prv"] > 0, (res["delta"] / res["prv"]) * 100, np.nan)
     
-    # New 4-Week Moving Average Run-Rate Projection Logic
     res["proj"] = (res["cur"] + (res["l4w"] / 28.0) * remaining_days).round().astype(int)
     
     res["gap"] = res["proj"] - res["target"]
     res["gap_pct"] = np.where(res["target"] > 0, (res["gap"] / res["target"]) * 100, np.nan)
+    
+    # Calculate % Contribution to Dip/Growth
+    res["contr"] = 0.0
+    sum_pos = res.loc[res['delta'] > 0, 'delta'].sum()
+    sum_neg = res.loc[res['delta'] < 0, 'delta'].sum()
+    
+    if sum_pos > 0:
+        res["contr"] = np.where(res['delta'] > 0, (res['delta'] / sum_pos) * 100, res["contr"])
+    if sum_neg < 0:
+        res["contr"] = np.where(res['delta'] < 0, (res['delta'] / sum_neg) * 100, res["contr"])
     
     return res
 
@@ -541,7 +537,6 @@ l4w_tot = len(df[(df[ft] >= l4w_s) & (df[ft] <= l4w_e)])
 dlt_tot = cur_tot - prv_tot
 pct_tot = (dlt_tot / prv_tot * 100) if prv_tot > 0 else np.nan
 
-# Global Projection utilizing new 4WMA logic
 proj_tot = int(round(cur_tot + (l4w_tot / 28.0) * remaining_days))
 
 client_mat = compute_comparison_matrix(df, "company_name", t_df)
@@ -560,7 +555,7 @@ tab1, tab2, tab3 = st.tabs(["📦 Client Operations", "🗺️ CL & Region Maps"
 # TAB 1: CLIENT OPERATIONS
 # ==============================================================================
 with tab1:
-    k1, k2, k3, k4 = st.columns(4)
+    k1, k2, k3, k4, k5 = st.columns(5)
     k_color = "var(--green)" if dlt_tot >= 0 else "var(--red)"
     g_color = "var(--green)" if gap_tot >= 0 else "var(--red)"
     
@@ -568,11 +563,13 @@ with tab1:
         pills = volume_pill(dlt_tot) + " " + pill_markup(pct_tot)
         st.markdown(kpi_html("Current Period FT", f'<span style="color:{k_color}">{fmt(cur_tot)}</span>', pill_html=pills), unsafe_allow_html=True)
     with k2: 
-        st.markdown(kpi_html("Projected Full Period FT", fmt(proj_tot), sub=f"4WMA Daily Pace: {daily_rr:.1f} FT/day"), unsafe_allow_html=True)
-    with k3: 
-        st.markdown(kpi_html("Final Target FT", fmt(total_target), sub="Assigned Segment Quota"), unsafe_allow_html=True)
+        st.markdown(kpi_html("Projected FT", fmt(proj_tot), sub=f"4WMA Pace: {daily_rr:.1f} FT/d"), unsafe_allow_html=True)
+    with k3:
+        st.markdown(kpi_html("Previous Period FT", fmt(prv_tot), sub="Historical Baseline"), unsafe_allow_html=True)
     with k4: 
-        st.markdown(kpi_html("Target Gap (Projected)", f'<span style="color:{g_color}">{fmt(gap_tot)}</span>', pill_html=pill_markup(gap_tot_pct)), unsafe_allow_html=True)
+        st.markdown(kpi_html("Final Target FT", fmt(total_target), sub="Segment Quota"), unsafe_allow_html=True)
+    with k5: 
+        st.markdown(kpi_html("Target Gap (Proj)", f'<span style="color:{g_color}">{fmt(gap_tot)}</span>', pill_html=pill_markup(gap_tot_pct)), unsafe_allow_html=True)
 
     if mode == "WTD":
         df_trend = df.copy()
@@ -607,7 +604,7 @@ with tab1:
             
             week_w = 80 / len(active_weeks) if active_weeks else 80
             col_specs_week = [("Client Profile", "company_name", 20)] + [(f"W/C {w.strftime('%d %b')}", w, week_w) for w in active_weeks]
-            w_col, w_desc = draw_sortable_header("client_week_matrix_v11", col_specs_week)
+            w_col, w_desc = draw_sortable_header("client_week_matrix_v13", col_specs_week)
             
             if w_col == "company_name" or w_col not in matrix_src.columns: matrix_src = matrix_src.sort_index(ascending=not w_desc)
             else: matrix_src = matrix_src.sort_values(by=w_col, ascending=not w_desc)
@@ -657,11 +654,11 @@ with tab1:
         st.plotly_chart(fig_mtd, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
     section("All Clients Performance Analysis")
-    c_col, c_desc = draw_sortable_header("client_main_v11", [
-        ("Client Name", "company_name", 23), 
-        ("Cur FT", "cur", 11), ("Proj FT", "proj", 11), ("Prv FT", "prv", 11),
-        ("Target", "target", 11), ("Gap", "gap", 11), 
-        ("Δ Vol", "delta", 11), ("Δ %", "pct", 11)
+    c_col, c_desc = draw_sortable_header("client_main_v13", [
+        ("Client Name", "company_name", 20), 
+        ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
+        ("Target", "target", 10), ("Gap", "gap", 10), 
+        ("Δ Vol", "delta", 10), ("Δ %", "pct", 10), ("Mix", "contr", 10)
     ])
     if c_col == "company_name" or c_col not in client_mat.columns: client_mat = client_mat.sort_index(ascending=not c_desc)
     else: client_mat = client_mat.sort_values(c_col, ascending=not c_desc)
@@ -671,14 +668,15 @@ with tab1:
         c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
         g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
         t_html += f"""<tr>
-            <td style="width:23%; font-weight:600;">{r['company_name']}</td>
-            <td class="n" style="width:11%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-            <td class="n" style="width:11%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-            <td class="n" style="width:11%; color:var(--muted);">{fmt(r['prv'])}</td>
-            <td class="n" style="width:11%; color:var(--muted);">{fmt(r['target'])}</td>
-            <td class="n" style="width:11%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
-            <td class="n" style="width:11%;">{volume_pill(r['delta'])}</td>
-            <td class="n" style="width:11%;">{pill_markup(r['pct'])}</td>
+            <td style="width:20%; font-weight:600;">{r['company_name']}</td>
+            <td class="n" style="width:10%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+            <td class="n" style="width:10%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+            <td class="n" style="width:10%; color:var(--muted);">{fmt(r['prv'])}</td>
+            <td class="n" style="width:10%; color:var(--muted);">{fmt(r['target'])}</td>
+            <td class="n" style="width:10%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
+            <td class="n" style="width:10%;">{volume_pill(r['delta'])}</td>
+            <td class="n" style="width:10%;">{pill_markup(r['pct'])}</td>
+            <td class="n" style="width:10%;">{contr_markup(r['delta'], r['contr'])}</td>
         </tr>"""
     t_html += "</tbody></table></div>"
     st.markdown(t_html, unsafe_allow_html=True)
@@ -686,11 +684,11 @@ with tab1:
     section("Growing Clients Matrix — Ranked by % Surge")
     growing_clients = client_mat[client_mat["delta"] > 0]
     if not growing_clients.empty:
-        gc_col, gc_desc = draw_sortable_header("growing_clients_v11", [
-            ("Client Name", "company_name", 23), 
-            ("Cur FT", "cur", 11), ("Proj FT", "proj", 11), ("Prv FT", "prv", 11),
-            ("Target", "target", 11), ("Gap", "gap", 11), 
-            ("Δ Vol", "delta", 11), ("Δ %", "pct", 11)
+        gc_col, gc_desc = draw_sortable_header("growing_clients_v13", [
+            ("Client Name", "company_name", 20), 
+            ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
+            ("Target", "target", 10), ("Gap", "gap", 10), 
+            ("Δ Vol", "delta", 10), ("Δ %", "pct", 10), ("Mix", "contr", 10)
         ])
         if gc_col == "company_name" or gc_col not in growing_clients.columns: growing_clients = growing_clients.sort_index(ascending=not gc_desc)
         else: growing_clients = growing_clients.sort_values(gc_col, ascending=not gc_desc)
@@ -700,14 +698,15 @@ with tab1:
             c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
             g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
             t_html += f"""<tr>
-                <td style="width:23%; font-weight:600; color:var(--green);">{r['company_name']}</td>
-                <td class="n" style="width:11%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                <td class="n" style="width:11%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                <td class="n" style="width:11%; color:var(--muted);">{fmt(r['prv'])}</td>
-                <td class="n" style="width:11%; color:var(--muted);">{fmt(r['target'])}</td>
-                <td class="n" style="width:11%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
-                <td class="n" style="width:11%;">{volume_pill(r['delta'])}</td>
-                <td class="n" style="width:11%;">{pill_markup(r['pct'])}</td>
+                <td style="width:20%; font-weight:600; color:var(--green);">{r['company_name']}</td>
+                <td class="n" style="width:10%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                <td class="n" style="width:10%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                <td class="n" style="width:10%; color:var(--muted);">{fmt(r['prv'])}</td>
+                <td class="n" style="width:10%; color:var(--muted);">{fmt(r['target'])}</td>
+                <td class="n" style="width:10%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
+                <td class="n" style="width:10%;">{volume_pill(r['delta'])}</td>
+                <td class="n" style="width:10%;">{pill_markup(r['pct'])}</td>
+                <td class="n" style="width:10%;">{contr_markup(r['delta'], r['contr'])}</td>
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
@@ -722,10 +721,10 @@ with tab1:
         section("Top 10 Degrowing VLs (By Client)")
         degrow_vbc = vl_by_client_mat[vl_by_client_mat["delta"] < 0].nsmallest(10, "delta")
         if not degrow_vbc.empty:
-            dv_col, dv_desc = draw_sortable_header("degrow_vbc_table_v11", [
-                ("VL", "vl_name", 18), ("Client", "company_name", 16),
-                ("Cur", "cur", 11), ("Proj", "proj", 11), ("Prv", "prv", 11),
-                ("Tgt", "target", 11), ("Gap", "gap", 11), ("Δ Vol", "delta", 11)
+            dv_col, dv_desc = draw_sortable_header("degrow_vbc_table_v13", [
+                ("VL", "vl_name", 16), ("Client", "company_name", 14),
+                ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
+                ("Tgt", "target", 10), ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Mix", "contr", 10)
             ])
             if dv_col in ["vl_name", "company_name"] or dv_col not in degrow_vbc.columns:
                 degrow_vbc = degrow_vbc.sort_index(ascending=not dv_desc)
@@ -737,14 +736,15 @@ with tab1:
                 c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
                 g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
                 t_html += f"""<tr>
-                    <td style="width:18%; font-weight:600;">{r['vl_name']}</td>
-                    <td style="width:16%; color:var(--muted);">{r['company_name']}</td>
-                    <td class="n" style="width:11%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                    <td class="n" style="width:11%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                    <td class="n" style="width:11%; color:var(--muted);">{fmt(r['prv'])}</td>
-                    <td class="n" style="width:11%; color:var(--muted);">{fmt(r['target'])}</td>
-                    <td class="n" style="width:11%; font-weight:600; color:{g_color};">{fmt(r['gap'])}</td>
-                    <td class="n" style="width:11%;">{volume_pill(r['delta'])}</td>
+                    <td style="width:16%; font-weight:600;">{r['vl_name']}</td>
+                    <td style="width:14%; color:var(--muted);">{r['company_name']}</td>
+                    <td class="n" style="width:10%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:10%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                    <td class="n" style="width:10%; color:var(--muted);">{fmt(r['prv'])}</td>
+                    <td class="n" style="width:10%; color:var(--muted);">{fmt(r['target'])}</td>
+                    <td class="n" style="width:10%; font-weight:600; color:{g_color};">{fmt(r['gap'])}</td>
+                    <td class="n" style="width:10%;">{volume_pill(r['delta'])}</td>
+                    <td class="n" style="width:10%;">{contr_markup(r['delta'], r['contr'])}</td>
                 </tr>"""
             t_html += "</tbody></table></div>"
             st.markdown(t_html, unsafe_allow_html=True)
@@ -755,10 +755,10 @@ with tab1:
         section("Top 10 Growing VLs (By Client)")
         grow_vbc = vl_by_client_mat[vl_by_client_mat["delta"] > 0].nlargest(10, "delta")
         if not grow_vbc.empty:
-            gv_col, gv_desc = draw_sortable_header("grow_vbc_table_v11", [
-                ("VL", "vl_name", 18), ("Client", "company_name", 16),
-                ("Cur", "cur", 11), ("Proj", "proj", 11), ("Prv", "prv", 11),
-                ("Tgt", "target", 11), ("Gap", "gap", 11), ("Δ Vol", "delta", 11)
+            gv_col, gv_desc = draw_sortable_header("grow_vbc_table_v13", [
+                ("VL", "vl_name", 16), ("Client", "company_name", 14),
+                ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
+                ("Tgt", "target", 10), ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Mix", "contr", 10)
             ])
             if gv_col in ["vl_name", "company_name"] or gv_col not in grow_vbc.columns:
                 grow_vbc = grow_vbc.sort_index(ascending=not gv_desc)
@@ -770,14 +770,15 @@ with tab1:
                 c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
                 g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
                 t_html += f"""<tr>
-                    <td style="width:18%; font-weight:600; color:var(--green);">{r['vl_name']}</td>
-                    <td style="width:16%; color:var(--muted);">{r['company_name']}</td>
-                    <td class="n" style="width:11%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                    <td class="n" style="width:11%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                    <td class="n" style="width:11%; color:var(--muted);">{fmt(r['prv'])}</td>
-                    <td class="n" style="width:11%; color:var(--muted);">{fmt(r['target'])}</td>
-                    <td class="n" style="width:11%; font-weight:600; color:{g_color};">{fmt(r['gap'])}</td>
-                    <td class="n" style="width:11%;">{volume_pill(r['delta'])}</td>
+                    <td style="width:16%; font-weight:600; color:var(--green);">{r['vl_name']}</td>
+                    <td style="width:14%; color:var(--muted);">{r['company_name']}</td>
+                    <td class="n" style="width:10%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:10%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                    <td class="n" style="width:10%; color:var(--muted);">{fmt(r['prv'])}</td>
+                    <td class="n" style="width:10%; color:var(--muted);">{fmt(r['target'])}</td>
+                    <td class="n" style="width:10%; font-weight:600; color:{g_color};">{fmt(r['gap'])}</td>
+                    <td class="n" style="width:10%;">{volume_pill(r['delta'])}</td>
+                    <td class="n" style="width:10%;">{contr_markup(r['delta'], r['contr'])}</td>
                 </tr>"""
             t_html += "</tbody></table></div>"
             st.markdown(t_html, unsafe_allow_html=True)
@@ -785,11 +786,11 @@ with tab1:
             st.info("No vendor lines currently displaying expansion trends.")
 
     section("Dynamic Vendor Line (VL) Analytics Tracker (By Client)")
-    vbc_col, vbc_desc = draw_sortable_header("vl_by_client_table_v11", [
-        ("Vendor Line (VL)", "vl_name", 20), ("Client", "company_name", 17), 
-        ("Cur FT", "cur", 9), ("Proj FT", "proj", 9), ("Prv FT", "prv", 9),
-        ("Target", "target", 9), ("Gap", "gap", 9), 
-        ("Δ Vol", "delta", 9), ("Δ %", "pct", 9)
+    vbc_col, vbc_desc = draw_sortable_header("vl_by_client_table_v13", [
+        ("Vendor Line (VL)", "vl_name", 16), ("Client", "company_name", 14), 
+        ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
+        ("Target", "target", 10), ("Gap", "gap", 10), 
+        ("Δ Vol", "delta", 10), ("Mix", "contr", 10)
     ])
     if vbc_col in ["vl_name", "company_name"] or vbc_col not in vl_by_client_mat.columns: vl_by_client_mat = vl_by_client_mat.sort_index(ascending=not vbc_desc)
     else: vl_by_client_mat = vl_by_client_mat.sort_values(vbc_col, ascending=not vbc_desc)
@@ -799,25 +800,25 @@ with tab1:
         c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
         g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
         t_html += f"""<tr>
-            <td style="width:20%; font-weight:600;">{r['vl_name']}</td>
-            <td style="width:17%; color:var(--muted);">{r['company_name']}</td>
-            <td class="n" style="width:9%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-            <td class="n" style="width:9%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-            <td class="n" style="width:9%; color:var(--muted);">{fmt(r['prv'])}</td>
-            <td class="n" style="width:9%; color:var(--muted);">{fmt(r['target'])}</td>
-            <td class="n" style="width:9%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
-            <td class="n" style="width:9%;">{volume_pill(r['delta'])}</td>
-            <td class="n" style="width:9%;">{pill_markup(r['pct'])}</td>
+            <td style="width:16%; font-weight:600;">{r['vl_name']}</td>
+            <td style="width:14%; color:var(--muted);">{r['company_name']}</td>
+            <td class="n" style="width:10%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+            <td class="n" style="width:10%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+            <td class="n" style="width:10%; color:var(--muted);">{fmt(r['prv'])}</td>
+            <td class="n" style="width:10%; color:var(--muted);">{fmt(r['target'])}</td>
+            <td class="n" style="width:10%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
+            <td class="n" style="width:10%;">{volume_pill(r['delta'])}</td>
+            <td class="n" style="width:10%;">{contr_markup(r['delta'], r['contr'])}</td>
         </tr>"""
     t_html += "</tbody></table></div>"
     st.markdown(t_html, unsafe_allow_html=True)
 
     section("All Vendor Lines (VL) Performance Analysis")
-    av_col, av_desc = draw_sortable_header("vl_main_table_v11", [
-        ("Vendor Line", "vl_name", 23), 
-        ("Cur FT", "cur", 11), ("Proj FT", "proj", 11), ("Prv FT", "prv", 11),
-        ("Target", "target", 11), ("Gap", "gap", 11), 
-        ("Δ Vol", "delta", 11), ("Δ %", "pct", 11)
+    av_col, av_desc = draw_sortable_header("vl_main_table_v13", [
+        ("Vendor Line", "vl_name", 20), 
+        ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
+        ("Target", "target", 10), ("Gap", "gap", 10), 
+        ("Δ Vol", "delta", 10), ("Δ %", "pct", 10), ("Mix", "contr", 10)
     ])
     if av_col == "vl_name" or av_col not in vl_master.columns: vl_master = vl_master.sort_index(ascending=not av_desc)
     else: vl_master = vl_master.sort_values(av_col, ascending=not av_desc)
@@ -827,14 +828,15 @@ with tab1:
         c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
         g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
         t_html += f"""<tr>
-            <td style="width:23%; font-weight:600;">{r['vl_name']}</td>
-            <td class="n" style="width:11%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-            <td class="n" style="width:11%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-            <td class="n" style="width:11%; color:var(--muted);">{fmt(r['prv'])}</td>
-            <td class="n" style="width:11%; color:var(--muted);">{fmt(r['target'])}</td>
-            <td class="n" style="width:11%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
-            <td class="n" style="width:11%;">{volume_pill(r['delta'])}</td>
-            <td class="n" style="width:11%;">{pill_markup(r['pct'])}</td>
+            <td style="width:20%; font-weight:600;">{r['vl_name']}</td>
+            <td class="n" style="width:10%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+            <td class="n" style="width:10%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+            <td class="n" style="width:10%; color:var(--muted);">{fmt(r['prv'])}</td>
+            <td class="n" style="width:10%; color:var(--muted);">{fmt(r['target'])}</td>
+            <td class="n" style="width:10%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
+            <td class="n" style="width:10%;">{volume_pill(r['delta'])}</td>
+            <td class="n" style="width:10%;">{pill_markup(r['pct'])}</td>
+            <td class="n" style="width:10%;">{contr_markup(r['delta'], r['contr'])}</td>
         </tr>"""
     t_html += "</tbody></table></div>"
     st.markdown(t_html, unsafe_allow_html=True)
@@ -848,10 +850,10 @@ with tab2:
     r_left, r_right = st.columns(2)
     with r_left:
         section("Regional Zone Allocations Table")
-        rl_col, rl_desc = draw_sortable_header("reg_main_v11", [
-            ("Region", "region", 23), ("Cur FT", "cur", 11), 
-            ("Proj FT", "proj", 11), ("Prv FT", "prv", 11), ("Target", "target", 11), 
-            ("Gap", "gap", 11), ("Δ Vol", "delta", 11), ("Δ %", "pct", 11)
+        rl_col, rl_desc = draw_sortable_header("reg_main_v13", [
+            ("Region", "region", 20), ("Cur", "cur", 10), 
+            ("Proj", "proj", 10), ("Prv", "prv", 10), ("Target", "target", 10), 
+            ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Δ %", "pct", 10), ("Mix", "contr", 10)
         ])
         if rl_col == "region" or rl_col not in reg_mat.columns: reg_mat = reg_mat.sort_index(ascending=not rl_desc)
         else: reg_mat = reg_mat.sort_values(rl_col, ascending=not rl_desc)
@@ -861,14 +863,15 @@ with tab2:
             c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
             g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
             t_html += f"""<tr>
-                <td style="width:23%; font-weight:600;">{r['region']}</td>
-                <td class="n" style="width:11%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                <td class="n" style="width:11%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                <td class="n" style="width:11%; color:var(--muted);">{fmt(r['prv'])}</td>
-                <td class="n" style="width:11%; color:var(--muted);">{fmt(r['target'])}</td>
-                <td class="n" style="width:11%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
-                <td class="n" style="width:11%;">{volume_pill(r['delta'])}</td>
-                <td class="n" style="width:11%;">{pill_markup(r['pct'])}</td>
+                <td style="width:20%; font-weight:600;">{r['region']}</td>
+                <td class="n" style="width:10%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                <td class="n" style="width:10%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                <td class="n" style="width:10%; color:var(--muted);">{fmt(r['prv'])}</td>
+                <td class="n" style="width:10%; color:var(--muted);">{fmt(r['target'])}</td>
+                <td class="n" style="width:10%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
+                <td class="n" style="width:10%;">{volume_pill(r['delta'])}</td>
+                <td class="n" style="width:10%;">{pill_markup(r['pct'])}</td>
+                <td class="n" style="width:10%;">{contr_markup(r['delta'], r['contr'])}</td>
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
@@ -877,10 +880,10 @@ with tab2:
         section("Cluster Lead (CL) Allocations Table")
         if "CL" in df.columns:
             cl_mat = compute_comparison_matrix(df, "CL", t_df)
-            cl_col, cl_desc = draw_sortable_header("cl_main_table_v11", [
-                ("Cluster Lead", "CL", 23), ("Cur FT", "cur", 11), 
-                ("Proj FT", "proj", 11), ("Prv FT", "prv", 11), ("Target", "target", 11), 
-                ("Gap", "gap", 11), ("Δ Vol", "delta", 11), ("Δ %", "pct", 11)
+            cl_col, cl_desc = draw_sortable_header("cl_main_table_v13", [
+                ("Cluster Lead", "CL", 20), ("Cur", "cur", 10), 
+                ("Proj", "proj", 10), ("Prv", "prv", 10), ("Target", "target", 10), 
+                ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Δ %", "pct", 10), ("Mix", "contr", 10)
             ])
             if cl_col == "CL" or cl_col not in cl_mat.columns: cl_mat = cl_mat.sort_index(ascending=not cl_desc)
             else: cl_mat = cl_mat.sort_values(cl_col, ascending=not cl_desc)
@@ -890,19 +893,50 @@ with tab2:
                 c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
                 g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
                 t_html += f"""<tr>
-                    <td style="width:23%; font-weight:600;">{r['CL']}</td>
-                    <td class="n" style="width:11%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                    <td class="n" style="width:11%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                    <td class="n" style="width:11%; color:var(--muted);">{fmt(r['prv'])}</td>
-                    <td class="n" style="width:11%; color:var(--muted);">{fmt(r['target'])}</td>
-                    <td class="n" style="width:11%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
-                    <td class="n" style="width:11%;">{volume_pill(r['delta'])}</td>
-                    <td class="n" style="width:11%;">{pill_markup(r['pct'])}</td>
+                    <td style="width:20%; font-weight:600;">{r['CL']}</td>
+                    <td class="n" style="width:10%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:10%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                    <td class="n" style="width:10%; color:var(--muted);">{fmt(r['prv'])}</td>
+                    <td class="n" style="width:10%; color:var(--muted);">{fmt(r['target'])}</td>
+                    <td class="n" style="width:10%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
+                    <td class="n" style="width:10%;">{volume_pill(r['delta'])}</td>
+                    <td class="n" style="width:10%;">{pill_markup(r['pct'])}</td>
+                    <td class="n" style="width:10%;">{contr_markup(r['delta'], r['contr'])}</td>
                 </tr>"""
             t_html += "</tbody></table></div>"
             st.markdown(t_html, unsafe_allow_html=True)
         else:
             st.info("`CL` metadata parameter missing from core query.")
+
+    section("Region × Client Execution Matrix")
+    reg_client_mat = compute_comparison_matrix(df, ["region", "company_name"], t_df)
+    
+    rc_col, rc_desc = draw_sortable_header("reg_client_table_v13", [
+        ("Region", "region", 15), ("Client Profile", "company_name", 15), 
+        ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
+        ("Target", "target", 10), ("Gap", "gap", 10), 
+        ("Δ Vol", "delta", 10), ("Mix", "contr", 10)
+    ])
+    if rc_col in ["region", "company_name"] or rc_col not in reg_client_mat.columns: reg_client_mat = reg_client_mat.sort_index(ascending=not rc_desc)
+    else: reg_client_mat = reg_client_mat.sort_values(rc_col, ascending=not rc_desc)
+    
+    t_html = '<div class="tw"><table class="dash-table"><tbody>'
+    for _, r in reg_client_mat.iterrows():
+        c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
+        g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
+        t_html += f"""<tr>
+            <td style="width:15%; font-weight:600;">{r['region']}</td>
+            <td style="width:15%; color:var(--muted);">{r['company_name']}</td>
+            <td class="n" style="width:10%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+            <td class="n" style="width:10%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+            <td class="n" style="width:10%; color:var(--muted);">{fmt(r['prv'])}</td>
+            <td class="n" style="width:10%; color:var(--muted);">{fmt(r['target'])}</td>
+            <td class="n" style="width:10%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
+            <td class="n" style="width:10%;">{volume_pill(r['delta'])}</td>
+            <td class="n" style="width:10%;">{contr_markup(r['delta'], r['contr'])}</td>
+        </tr>"""
+    t_html += "</tbody></table></div>"
+    st.markdown(t_html, unsafe_allow_html=True)
 
     if "CL" in df.columns and "am_name" in df.columns:
         section("Interactive Drill-Down: Account Managers under Selected Cluster Lead")
@@ -914,10 +948,10 @@ with tab2:
             df_cl_drill = df[df["CL"].isin(sel_drill_cl)]
             am_drill_mat = compute_comparison_matrix(df_cl_drill, "am_name", t_df)
             
-            amd_col, amd_desc = draw_sortable_header("am_drill_table_v11", [
-                ("Account Manager", "am_name", 23), ("Cur FT", "cur", 11), 
-                ("Proj FT", "proj", 11), ("Prv FT", "prv", 11), ("Target", "target", 11), 
-                ("Gap", "gap", 11), ("Δ Vol", "delta", 11), ("Δ %", "pct", 11)
+            amd_col, amd_desc = draw_sortable_header("am_drill_table_v13", [
+                ("Account Manager", "am_name", 20), ("Cur", "cur", 10), 
+                ("Proj", "proj", 10), ("Prv", "prv", 10), ("Target", "target", 10), 
+                ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Δ %", "pct", 10), ("Mix", "contr", 10)
             ])
             if amd_col == "am_name" or amd_col not in am_drill_mat.columns: am_drill_mat = am_drill_mat.sort_index(ascending=not amd_desc)
             else: am_drill_mat = am_drill_mat.sort_values(amd_col, ascending=not amd_desc)
@@ -927,29 +961,30 @@ with tab2:
                 c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
                 g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
                 t_html += f"""<tr>
-                    <td style="width:23%; font-weight:600; color:var(--blue);">{r['am_name']}</td>
-                    <td class="n" style="width:11%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                    <td class="n" style="width:11%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                    <td class="n" style="width:11%; color:var(--muted);">{fmt(r['prv'])}</td>
-                    <td class="n" style="width:11%; color:var(--muted);">{fmt(r['target'])}</td>
-                    <td class="n" style="width:11%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
-                    <td class="n" style="width:11%;">{volume_pill(r['delta'])}</td>
-                    <td class="n" style="width:11%;">{pill_markup(r['pct'])}</td>
+                    <td style="width:20%; font-weight:600; color:var(--blue);">{r['am_name']}</td>
+                    <td class="n" style="width:10%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                    <td class="n" style="width:10%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                    <td class="n" style="width:10%; color:var(--muted);">{fmt(r['prv'])}</td>
+                    <td class="n" style="width:10%; color:var(--muted);">{fmt(r['target'])}</td>
+                    <td class="n" style="width:10%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
+                    <td class="n" style="width:10%;">{volume_pill(r['delta'])}</td>
+                    <td class="n" style="width:10%;">{pill_markup(r['pct'])}</td>
+                    <td class="n" style="width:10%;">{contr_markup(r['delta'], r['contr'])}</td>
                 </tr>"""
             t_html += "</tbody></table></div>"
             st.markdown(t_html, unsafe_allow_html=True)
 
     section("Region Breakdown for Gap Clients (Shortfall Contributors Only)")
-    gap_clients = client_mat[client_mat["delta"] < 0]["Client"].unique()
+    gap_clients = client_mat[client_mat["delta"] < 0]["company_name"].unique()
     if len(gap_clients) > 0:
         df_gap = df[df["company_name"].isin(gap_clients)]
         gap_reg = compute_comparison_matrix(df_gap, ["company_name", "region"], t_df)
         
-        gr_col, gr_desc = draw_sortable_header("gap_reg_table_v11", [
-            ("Client Name", "company_name", 20), ("Region", "region", 17), 
-            ("Cur FT", "cur", 9), ("Proj FT", "proj", 9), ("Prv FT", "prv", 9),
-            ("Target", "target", 9), ("Gap", "gap", 9), 
-            ("Δ Vol", "delta", 9), ("Δ %", "pct", 9)
+        gr_col, gr_desc = draw_sortable_header("gap_reg_table_v13", [
+            ("Client Name", "company_name", 15), ("Region", "region", 15), 
+            ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
+            ("Target", "target", 10), ("Gap", "gap", 10), 
+            ("Δ Vol", "delta", 10), ("Mix", "contr", 10)
         ])
         if gr_col in ["company_name", "region"] or gr_col not in gap_reg.columns: gap_reg = gap_reg.sort_index(ascending=not gr_desc)
         else: gap_reg = gap_reg.sort_values(gr_col, ascending=not gr_desc)
@@ -959,15 +994,15 @@ with tab2:
             c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
             g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
             t_html += f"""<tr>
-                <td style="width:20%; font-weight:600;">{r['company_name']}</td>
-                <td style="width:17%; color:var(--muted);">{r['region']}</td>
-                <td class="n" style="width:9%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                <td class="n" style="width:9%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                <td class="n" style="width:9%; color:var(--muted);">{fmt(r['prv'])}</td>
-                <td class="n" style="width:9%; color:var(--muted);">{fmt(r['target'])}</td>
-                <td class="n" style="width:9%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
-                <td class="n" style="width:9%;">{volume_pill(r['delta'])}</td>
-                <td class="n" style="width:9%;">{pill_markup(r['pct'])}</td>
+                <td style="width:15%; font-weight:600;">{r['company_name']}</td>
+                <td style="width:15%; color:var(--muted);">{r['region']}</td>
+                <td class="n" style="width:10%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                <td class="n" style="width:10%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                <td class="n" style="width:10%; color:var(--muted);">{fmt(r['prv'])}</td>
+                <td class="n" style="width:10%; color:var(--muted);">{fmt(r['target'])}</td>
+                <td class="n" style="width:10%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
+                <td class="n" style="width:10%;">{volume_pill(r['delta'])}</td>
+                <td class="n" style="width:10%;">{contr_markup(r['delta'], r['contr'])}</td>
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
@@ -975,10 +1010,10 @@ with tab2:
     section("Growing Regions Profile — Ranked by % Surge")
     growing_regions = reg_mat[reg_mat["delta"] > 0]
     if not growing_regions.empty:
-        grg_col, grg_desc = draw_sortable_header("growing_regions_tbl_v11", [
-            ("Region Zone", "region", 23), ("Cur FT", "cur", 11), 
-            ("Proj FT", "proj", 11), ("Prv FT", "prv", 11), ("Target", "target", 11), 
-            ("Gap", "gap", 11), ("Δ Vol", "delta", 11), ("Δ %", "pct", 11)
+        grg_col, grg_desc = draw_sortable_header("growing_regions_tbl_v13", [
+            ("Region Zone", "region", 20), ("Cur", "cur", 10), 
+            ("Proj", "proj", 10), ("Prv", "prv", 10), ("Target", "target", 10), 
+            ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Δ %", "pct", 10), ("Mix", "contr", 10)
         ])
         if grg_col == "region" or grg_col not in growing_regions.columns: growing_regions = growing_regions.sort_index(ascending=not grg_desc)
         else: growing_regions = growing_regions.sort_values(grg_col, ascending=not grg_desc)
@@ -988,14 +1023,15 @@ with tab2:
             c_color = "var(--green)" if r['delta'] >= 0 else "var(--red)"
             g_color = "var(--green)" if r['gap'] >= 0 else "var(--red)"
             t_html += f"""<tr>
-                <td style="width:23%; font-weight:600; color:var(--green);">{r['region']}</td>
-                <td class="n" style="width:11%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
-                <td class="n" style="width:11%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
-                <td class="n" style="width:11%; color:var(--muted);">{fmt(r['prv'])}</td>
-                <td class="n" style="width:11%; color:var(--muted);">{fmt(r['target'])}</td>
-                <td class="n" style="width:11%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
-                <td class="n" style="width:11%;">{volume_pill(r['delta'])}</td>
-                <td class="n" style="width:11%;">{pill_markup(r['pct'])}</td>
+                <td style="width:20%; font-weight:600; color:var(--green);">{r['region']}</td>
+                <td class="n" style="width:10%; font-weight:600; color:{c_color};">{fmt(r['cur'])}</td>
+                <td class="n" style="width:10%; font-weight:700; color:var(--blue);">{fmt(r['proj'])}</td>
+                <td class="n" style="width:10%; color:var(--muted);">{fmt(r['prv'])}</td>
+                <td class="n" style="width:10%; color:var(--muted);">{fmt(r['target'])}</td>
+                <td class="n" style="width:10%; font-weight:600; color:{g_color};">{fmt(r['gap'])}<br>{pill_markup(r['gap_pct'])}</td>
+                <td class="n" style="width:10%;">{volume_pill(r['delta'])}</td>
+                <td class="n" style="width:10%;">{pill_markup(r['pct'])}</td>
+                <td class="n" style="width:10%;">{contr_markup(r['delta'], r['contr'])}</td>
             </tr>"""
         t_html += "</tbody></table></div>"
         st.markdown(t_html, unsafe_allow_html=True)
