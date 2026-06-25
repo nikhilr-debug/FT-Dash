@@ -431,9 +431,9 @@ def volume_pill(val):
     return f'<span class="pill {cls}">{"+" if val > 0 else ""}{int(val):,}</span>'
 
 def contr_markup(delta, contr):
-    if pd.isna(contr) or delta == 0: return '<span class="td-muted">—</span>'
-    if delta > 0: return f'<span style="color:var(--green); font-size:10px; font-weight:700;">{contr:.1f}% Grw</span>'
-    return f'<span style="color:var(--red); font-size:10px; font-weight:700;">{contr:.1f}% Dip</span>'
+    if pd.isna(contr) or delta == 0 or contr == 0: return '<span class="td-muted">—</span>'
+    if delta > 0: return f'<span style="color:var(--green); font-size:10px; font-weight:700;">{abs(contr):.1f}% Grw</span>'
+    return f'<span style="color:var(--red); font-size:10px; font-weight:700;">{abs(contr):.1f}% Dip</span>'
 
 def kpi_html(label, value, sub="", pill_html=""):
     return f"""
@@ -499,10 +499,11 @@ def compute_comparison_matrix(dataframe, group_key, target_df=None):
     sum_pos = res.loc[res['delta'] > 0, 'delta'].sum()
     sum_neg = res.loc[res['delta'] < 0, 'delta'].sum()
     
+    # Store dip contributions as negative numbers so they sort flawlessly alongside growth 
     if sum_pos > 0:
         res["contr"] = np.where(res['delta'] > 0, (res['delta'] / sum_pos) * 100, res["contr"])
     if sum_neg < 0:
-        res["contr"] = np.where(res['delta'] < 0, (res['delta'] / sum_neg) * 100, res["contr"])
+        res["contr"] = np.where(res['delta'] < 0, -(res['delta'] / sum_neg) * 100, res["contr"])
     
     return res
 
@@ -603,7 +604,7 @@ with tab1:
             
             week_w = 80 / len(active_weeks) if active_weeks else 80
             col_specs_week = [("Client Profile", "company_name", 20)] + [(f"W/C {w.strftime('%d %b')}", w, week_w) for w in active_weeks]
-            w_col, w_desc = draw_sortable_header("client_week_matrix_v14", col_specs_week)
+            w_col, w_desc = draw_sortable_header("client_week_matrix_v15", col_specs_week)
             
             if w_col == "company_name" or w_col not in matrix_src.columns: matrix_src = matrix_src.sort_index(ascending=not w_desc)
             else: matrix_src = matrix_src.sort_values(by=w_col, ascending=not w_desc)
@@ -653,7 +654,7 @@ with tab1:
         st.plotly_chart(fig_mtd, config={"displayModeBar": False}, key="mtd_day_runrate_chart")
 
     section("All Clients Performance Analysis")
-    c_col, c_desc = draw_sortable_header("client_main_v14", [
+    c_col, c_desc = draw_sortable_header("client_main_v15", [
         ("Client Name", "company_name", 20), 
         ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
         ("Target", "target", 10), ("Gap", "gap", 10), 
@@ -683,7 +684,7 @@ with tab1:
     section("Growing Clients Matrix — Ranked by % Surge")
     growing_clients = client_mat[client_mat["delta"] > 0]
     if not growing_clients.empty:
-        gc_col, gc_desc = draw_sortable_header("growing_clients_v14", [
+        gc_col, gc_desc = draw_sortable_header("growing_clients_v15", [
             ("Client Name", "company_name", 20), 
             ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
             ("Target", "target", 10), ("Gap", "gap", 10), 
@@ -720,10 +721,10 @@ with tab1:
         section("Top 10 Degrowing VLs (By Client)")
         degrow_vbc = vl_by_client_mat[vl_by_client_mat["delta"] < 0].nsmallest(10, "delta")
         if not degrow_vbc.empty:
-            dv_col, dv_desc = draw_sortable_header("degrow_vbc_table_v14", [
+            dv_col, dv_desc = draw_sortable_header("degrow_vbc_table_v15", [
                 ("VL", "vl_name", 16), ("Client", "company_name", 14),
                 ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
-                ("Tgt", "target", 10), ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Contribution", "contr", 10)
+                ("Tgt", "target", 10), ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Contr", "contr", 10)
             ])
             if dv_col in ["vl_name", "company_name"] or dv_col not in degrow_vbc.columns:
                 degrow_vbc = degrow_vbc.sort_index(ascending=not dv_desc)
@@ -754,10 +755,10 @@ with tab1:
         section("Top 10 Growing VLs (By Client)")
         grow_vbc = vl_by_client_mat[vl_by_client_mat["delta"] > 0].nlargest(10, "delta")
         if not grow_vbc.empty:
-            gv_col, gv_desc = draw_sortable_header("grow_vbc_table_v14", [
+            gv_col, gv_desc = draw_sortable_header("grow_vbc_table_v15", [
                 ("VL", "vl_name", 16), ("Client", "company_name", 14),
                 ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
-                ("Tgt", "target", 10), ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Contribution", "contr", 10)
+                ("Tgt", "target", 10), ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Contr", "contr", 10)
             ])
             if gv_col in ["vl_name", "company_name"] or gv_col not in grow_vbc.columns:
                 grow_vbc = grow_vbc.sort_index(ascending=not gv_desc)
@@ -785,7 +786,7 @@ with tab1:
             st.info("No vendor lines currently displaying expansion trends.")
 
     section("Dynamic Vendor Line (VL) Analytics Tracker (By Client)")
-    vbc_col, vbc_desc = draw_sortable_header("vl_by_client_table_v14", [
+    vbc_col, vbc_desc = draw_sortable_header("vl_by_client_table_v15", [
         ("Vendor Line (VL)", "vl_name", 16), ("Client", "company_name", 14), 
         ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
         ("Target", "target", 10), ("Gap", "gap", 10), 
@@ -813,7 +814,7 @@ with tab1:
     st.markdown(t_html, unsafe_allow_html=True)
 
     section("All Vendor Lines (VL) Performance Analysis")
-    av_col, av_desc = draw_sortable_header("vl_main_table_v14", [
+    av_col, av_desc = draw_sortable_header("vl_main_table_v15", [
         ("Vendor Line", "vl_name", 20), 
         ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
         ("Target", "target", 10), ("Gap", "gap", 10), 
@@ -849,7 +850,7 @@ with tab2:
     r_left, r_right = st.columns(2)
     with r_left:
         section("Regional Zone Allocations Table")
-        rl_col, rl_desc = draw_sortable_header("reg_main_v14", [
+        rl_col, rl_desc = draw_sortable_header("reg_main_v15", [
             ("Region", "region", 20), ("Cur", "cur", 10), 
             ("Proj", "proj", 10), ("Prv", "prv", 10), ("Target", "target", 10), 
             ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Δ %", "pct", 10), ("Contribution", "contr", 10)
@@ -879,7 +880,7 @@ with tab2:
         section("Cluster Lead (CL) Allocations Table")
         if "CL" in df.columns:
             cl_mat = compute_comparison_matrix(df, "CL", t_df)
-            cl_col, cl_desc = draw_sortable_header("cl_main_table_v14", [
+            cl_col, cl_desc = draw_sortable_header("cl_main_table_v15", [
                 ("Cluster Lead", "CL", 20), ("Cur", "cur", 10), 
                 ("Proj", "proj", 10), ("Prv", "prv", 10), ("Target", "target", 10), 
                 ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Δ %", "pct", 10), ("Contribution", "contr", 10)
@@ -910,7 +911,7 @@ with tab2:
     section("Region × Client Execution Matrix")
     reg_client_mat = compute_comparison_matrix(df, ["region", "company_name"], t_df)
     
-    rc_col, rc_desc = draw_sortable_header("reg_client_table_v14", [
+    rc_col, rc_desc = draw_sortable_header("reg_client_table_v15", [
         ("Region", "region", 15), ("Client Profile", "company_name", 15), 
         ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
         ("Target", "target", 10), ("Gap", "gap", 10), 
@@ -947,7 +948,7 @@ with tab2:
             df_cl_drill = df[df["CL"].isin(sel_drill_cl)]
             am_drill_mat = compute_comparison_matrix(df_cl_drill, "am_name", t_df)
             
-            amd_col, amd_desc = draw_sortable_header("am_drill_table_v14", [
+            amd_col, amd_desc = draw_sortable_header("am_drill_table_v15", [
                 ("Account Manager", "am_name", 20), ("Cur", "cur", 10), 
                 ("Proj", "proj", 10), ("Prv", "prv", 10), ("Target", "target", 10), 
                 ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Δ %", "pct", 10), ("Contribution", "contr", 10)
@@ -979,7 +980,7 @@ with tab2:
         df_gap = df[df["company_name"].isin(gap_clients)]
         gap_reg = compute_comparison_matrix(df_gap, ["company_name", "region"], t_df)
         
-        gr_col, gr_desc = draw_sortable_header("gap_reg_table_v14", [
+        gr_col, gr_desc = draw_sortable_header("gap_reg_table_v15", [
             ("Client Name", "company_name", 15), ("Region", "region", 15), 
             ("Cur", "cur", 10), ("Proj", "proj", 10), ("Prv", "prv", 10),
             ("Target", "target", 10), ("Gap", "gap", 10), 
@@ -1009,7 +1010,7 @@ with tab2:
     section("Growing Regions Profile — Ranked by % Surge")
     growing_regions = reg_mat[reg_mat["delta"] > 0]
     if not growing_regions.empty:
-        grg_col, grg_desc = draw_sortable_header("growing_regions_tbl_v14", [
+        grg_col, grg_desc = draw_sortable_header("growing_regions_tbl_v15", [
             ("Region Zone", "region", 20), ("Cur", "cur", 10), 
             ("Proj", "proj", 10), ("Prv", "prv", 10), ("Target", "target", 10), 
             ("Gap", "gap", 10), ("Δ Vol", "delta", 10), ("Δ %", "pct", 10), ("Contribution", "contr", 10)
